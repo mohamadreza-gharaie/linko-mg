@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: linko
+    runtime: python
+        buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-class gthread --workers 1 --threads 100 --timeout 0 backend.app:app
+    healthCheckPath: /
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: LINKO_DATA_DIR
+        value: /var/data
+      - key: SESSION_COOKIE_SECURE
+        value: "1"
+    disk:
+      name: linko-data
+      mountPath: /var/data
+      sizeGB: 1

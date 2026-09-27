@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<title>لینکو | Linko</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="alternate icon" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+
+<!-- ===================== صفحه ورود / ثبت‌نام ===================== -->
+<div id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo"><i class="fa-solid fa-paper-plane"></i></div>
+    <h1>لینکو</h1>
+    <p class="auth-sub">چت خصوصی، گروه و کانال — همه‌جا در دسترس</p>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login">ورود</button>
+      <button class="auth-tab" data-tab="register">ثبت‌نام</button>
+    </div>
+
+    <form id="loginForm" class="auth-form active">
+      <input type="text" id="loginUsername" placeholder="نام کاربری" autocomplete="username" required>
+      <input type="password" id="loginPassword" placeholder="رمز عبور" autocomplete="current-password" required>
+      <button type="submit" class="btn-primary">ورود به حساب</button>
+      <div class="auth-error" id="loginError"></div>
+    </form>
+
+    <form id="registerForm" class="auth-form">
+      <input type="text" id="regDisplayName" placeholder="نام نمایشی" required>
+      <input type="text" id="regUsername" placeholder="نام کاربری (انگلیسی)" required>
+      <input type="password" id="regPassword" placeholder="رمز عبور" required>
+      <button type="submit" class="btn-primary">ساخت حساب کاربری</button>
+      <div class="auth-error" id="registerError"></div>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== برنامه اصلی ===================== -->
+<div id="appScreen" class="app-screen hidden">
+
+  <!-- سایدبار -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="me-info" id="meInfoBtn" title="پروفایل و تنظیمات">
+        <div class="avatar" id="meAvatar"></div>
+        <div class="me-name" id="meName"></div>
+      </div>
+      <div class="sidebar-actions">
+        <button class="icon-btn" id="newChatBtn" title="گفتگوی جدید"><i class="fa-solid fa-comment-medical"></i></button>
+        <button class="icon-btn" id="menuBtn" title="منو"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+        <div class="dropdown-menu hidden" id="dropdownMenu">
+          <button data-action="profile"><i class="fa-solid fa-user-pen"></i> پروفایل و تنظیمات</button>
+          <button data-action="group"><i class="fa-solid fa-users"></i> ساخت گروه</button>
+          <button data-action="channel"><i class="fa-solid fa-bullhorn"></i> ساخت کانال</button>
+          <button data-action="logout"><i class="fa-solid fa-right-from-bracket"></i> خروج از حساب</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="search-box">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input type="text" id="chatSearchInput" placeholder="جستجو در گفتگوها...">
+    </div>
+
+    <div class="chat-item saved-messages-item" id="savedMessagesItem">
+      <div class="avatar saved-messages-avatar"><i class="fa-solid fa-bookmark"></i></div>
+      <div class="chat-item-body">
+        <div class="chat-item-top">
+          <span class="chat-item-name">پیام‌های ذخیره‌شده</span>
+        </div>
+        <div class="chat-item-bottom">
+          <span class="chat-item-preview">یادداشت‌ها و فایل‌های شخصی شما</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-list" id="chatList"></div>
+  </aside>
+
+  <!-- ناحیه گفتگو -->
+  <main class="chat-area" id="chatArea">
+    <div class="empty-state" id="emptyState">
+      <i class="fa-solid fa-comments"></i>
+      <p>یک گفتگو را برای شروع انتخاب کنید</p>
+    </div>
+
+    <div class="chat-window hidden" id="chatWindow">
+      <div class="chat-header">
+        <button class="icon-btn back-btn" id="backBtn"><i class="fa-solid fa-arrow-right"></i></button>
+        <div class="avatar-wrap">
+          <div class="avatar" id="chatAvatar"></div>
+          <span class="online-dot hidden" id="chatAvatarDot"></span>
+        </div>
+        <div class="chat-header-info">
+          <div class="chat-header-name" id="chatHeaderName"></div>
+          <div class="chat-header-sub" id="chatHeaderSub"></div>
+        </div>
+        <button class="icon-btn hidden" id="callBtn" title="تماس صوتی"><i class="fa-solid fa-phone"></i></button>
+        <button class="icon-btn" id="chatInfoBtn" title="اطلاعات و اعضا"><i class="fa-solid fa-circle-info"></i></button>
+      </div>
+
+      <div class="pinned-bar hidden" id="pinnedBar">
+        <i class="fa-solid fa-thumbtack"></i>
+        <div class="pinned-bar-info">
+          <div class="pinned-bar-title">پیام پین‌شده</div>
+          <div class="pinned-bar-preview" id="pinnedBarPreview"></div>
+        </div>
+        <span class="pinned-bar-count hidden" id="pinnedBarCount"></span>
+        <button type="button" class="icon-btn hidden" id="unpinCurrentBtn" title="برداشتن پین"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="messages" id="messagesContainer"></div>
+
+      <div class="typing-indicator hidden" id="typingIndicator">در حال تایپ...</div>
+
+      <div class="reply-edit-bar hidden" id="replyEditBar">
+        <i class="fa-solid" id="replyEditIcon"></i>
+        <div class="reply-edit-info">
+          <div class="reply-edit-title" id="replyEditTitle"></div>
+          <div class="reply-edit-preview" id="replyEditPreview"></div>
+        </div>
+        <button type="button" class="icon-btn" id="cancelReplyEditBtn" title="لغو"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="channel-readonly-notice hidden" id="channelReadonlyNotice">
+        <i class="fa-solid fa-lock"></i>
+        <span>فقط مالک و مدیران این کانال می‌توانند پیام ارسال کنند</span>
+      </div>
+
+      <div class="upload-progress-bar hidden" id="uploadProgressBar">
+        <div class="upload-progress-info">
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+          <span id="uploadProgressLabel">در حال ارسال فایل...</span>
+          <span id="uploadProgressPercent">۰٪</span>
+        </div>
+        <div class="upload-progress-track"><div class="upload-progress-fill" id="uploadProgressFill"></div></div>
+      </div>
+
+      <div class="voice-recording-bar hidden" id="voiceRecordingBar">
+        <i class="fa-solid fa-microphone recording-dot"></i>
+        <span id="recordingTimer">۰۰:۰۰</span>
+        <span class="recording-hint">در حال ضبط پیام صوتی...</span>
+        <button type="button" class="icon-btn" id="cancelRecordingBtn" title="لغو"><i class="fa-solid fa-trash"></i></button>
+        <button type="button" class="icon-btn send-recording-btn" id="sendRecordingBtn" title="ارسال"><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+
+      <div class="format-toolbar hidden" id="formatToolbar">
+        <button type="button" data-format="bold" title="بولد"><i class="fa-solid fa-bold"></i></button>
+        <button type="button" data-format="italic" title="ایتالیک"><i class="fa-solid fa-italic"></i></button>
+        <button type="button" data-format="highlight" title="هایلایت"><i class="fa-solid fa-highlighter"></i></button>
+        <button type="button" data-format="quote" title="نقل‌قول"><i class="fa-solid fa-quote-right"></i></button>
+      </div>
+
+      <form class="message-input-bar" id="messageForm">
+        <button type="button" class="icon-btn" id="attachBtn" title="ارسال فایل"><i class="fa-solid fa-paperclip"></i></button>
+        <input type="file" id="fileInput" class="hidden" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z,.txt,.csv,.json">
+        <button type="button" class="icon-btn hidden" id="pollBtn" title="ساخت نظرسنجی"><i class="fa-solid fa-square-poll-vertical"></i></button>
+        <div id="messageInput" class="message-input-editable" contenteditable="true" data-placeholder="پیام خود را بنویسید..."></div>
+        <button type="button" class="icon-btn" id="micBtn" title="ضبط پیام صوتی"><i class="fa-solid fa-microphone"></i></button>
+        <button type="submit" class="send-btn"><i class="fa-solid fa-paper-plane"></i></button>
+      </form>
+    </div>
+  </main>
+</div>
+
+<!-- ===================== مودال‌ها ===================== -->
+
+<!-- مودال گفتگوی جدید -->
+<div class="modal-overlay hidden" id="newChatModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>گفتگوی خصوصی جدید</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="userSearchInput" placeholder="جستجوی کاربر با نام کاربری یا نام..." class="modal-input">
+      <div class="user-search-results" id="userSearchResults"></div>
+    </div>
+  </div>
+</div>
+
+<!-- مودال ساخت گروه/کانال -->
+<div class="modal-overlay hidden" id="createChatModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="createChatTitle">ساخت گروه</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="newChatName" placeholder="نام گروه/کانال" class="modal-input">
+      <textarea id="newChatDesc" placeholder="توضیحات (اختیاری)" class="modal-input" rows="2"></textarea>
+      <label class="checkbox-row hidden" id="publicToggleRow">
+        <input type="checkbox" id="isPublicCheckbox">
+        <span>کانال عمومی باشد</span>
+      </label>
+      <label class="checkbox-row hidden" id="openChatToggleRow">
+        <input type="checkbox" id="isOpenChatCheckbox">
+        <span>اجازه بده همه اعضا در کانال پیام بدهند (پیش‌فرض: فقط مدیران)</span>
+      </label>
+      <div class="modal-subtitle">افزودن اعضا</div>
+      <input type="text" id="memberSearchInput" placeholder="جستجوی کاربر..." class="modal-input">
+      <div class="user-search-results" id="memberSearchResults"></div>
+      <div class="selected-members" id="selectedMembers"></div>
+      <button class="btn-primary" id="submitCreateChat">ایجاد</button>
+      <div class="auth-error" id="createChatError"></div>
+    </div>
+  </div>
+</div>
+
+<!-- مودال اطلاعات و اعضا -->
+<div class="modal-overlay hidden" id="infoModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="infoModalTitle">اطلاعات گفتگو</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="profile-avatar-edit hidden" id="chatAvatarEditSection">
+        <div class="avatar avatar-lg" id="infoModalAvatarPreview"></div>
+        <div class="profile-avatar-actions">
+          <label class="btn-secondary avatar-upload-label" for="chatAvatarInput">
+            <i class="fa-solid fa-camera"></i> تغییر عکس
+          </label>
+          <input type="file" id="chatAvatarInput" accept="image/*" class="hidden">
+          <button type="button" class="btn-secondary danger-text hidden" id="removeChatAvatarBtn">
+            <i class="fa-solid fa-trash"></i> حذف عکس
+          </button>
+        </div>
+      </div>
+      <p id="infoModalDesc" class="info-desc"></p>
+      <label class="checkbox-row hidden" id="channelOpenChatRow">
+        <input type="checkbox" id="channelOpenChatCheckbox">
+        <span>اجازه بده همه اعضا در این کانال پیام بدهند</span>
+      </label>
+      <button class="btn-secondary hidden" id="addMemberBtn"><i class="fa-solid fa-user-plus"></i> افزودن عضو</button>
+      <div class="modal-subtitle">اعضا</div>
+      <div class="member-list" id="memberList"></div>
+      <div class="info-modal-footer">
+        <button class="btn-secondary danger-text hidden" id="leaveChatBtn"><i class="fa-solid fa-arrow-right-from-bracket"></i> خروج از گفتگو</button>
+        <button class="btn-secondary danger-text hidden" id="deleteChatBtn"><i class="fa-solid fa-trash"></i> حذف گفتگو</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- مودال افزودن عضو به گفتگوی موجود -->
+<div class="modal-overlay hidden" id="addMemberModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>افزودن عضو</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="addMemberSearchInput" placeholder="جستجوی کاربر..." class="modal-input">
+      <div class="user-search-results" id="addMemberResults"></div>
+      <div class="selected-members" id="addMemberSelected"></div>
+      <button class="btn-primary" id="submitAddMember">افزودن به گفتگو</button>
+    </div>
+  </div>
+</div>
+
+<!-- مودال پروفایل و تنظیمات -->
+<div class="modal-overlay hidden" id="profileModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>پروفایل و تنظیمات</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="settings-tabs">
+      <button class="settings-tab active" data-settings-tab="profile"><i class="fa-solid fa-user"></i> پروفایل</button>
+      <button class="settings-tab" data-settings-tab="account"><i class="fa-solid fa-key"></i> حساب کاربری</button>
+      <button class="settings-tab" data-settings-tab="personalize"><i class="fa-solid fa-palette"></i> شخصی‌سازی</button>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- تب پروفایل -->
+      <div class="settings-panel active" id="settingsPanelProfile">
+        <div class="profile-avatar-edit">
+          <div class="avatar avatar-lg" id="profileAvatarPreview"></div>
+          <div class="profile-avatar-actions">
+            <label class="btn-secondary avatar-upload-label" for="profileAvatarInput">
+              <i class="fa-solid fa-camera"></i> تغییر عکس
+            </label>
+            <input type="file" id="profileAvatarInput" accept="image/*" class="hidden">
+            <button type="button" class="btn-secondary danger-text" id="removeAvatarBtn">
+              <i class="fa-solid fa-trash"></i> حذف عکس
+            </button>
+          </div>
+        </div>
+        <input type="text" id="profileDisplayName" placeholder="نام نمایشی" class="modal-input">
+        <textarea id="profileBio" placeholder="درباره من (اختیاری)" class="modal-input" rows="2"></textarea>
+        <button class="btn-primary" id="submitProfile">ذخیره تغییرات</button>
+        <div class="auth-error" id="profileError"></div>
+      </div>
+
+      <!-- تب حساب کاربری -->
+      <div class="settings-panel" id="settingsPanelAccount">
+        <div class="modal-subtitle">تغییر نام کاربری</div>
+        <input type="text" id="accountUsername" placeholder="نام کاربری جدید (انگلیسی)" class="modal-input">
+        <button class="btn-secondary" id="submitUsername"><i class="fa-solid fa-check"></i> ذخیره نام کاربری</button>
+        <div class="auth-error" id="usernameError"></div>
+
+        <div class="modal-subtitle" style="margin-top:14px;">تغییر رمز عبور</div>
+        <input type="password" id="currentPassword" placeholder="رمز عبور فعلی" class="modal-input">
+        <input type="password" id="newPassword" placeholder="رمز عبور جدید" class="modal-input">
+        <button class="btn-secondary" id="submitPassword"><i class="fa-solid fa-lock"></i> تغییر رمز عبور</button>
+        <div class="auth-error" id="passwordError"></div>
+      </div>
+
+      <!-- تب شخصی‌سازی -->
+      <div class="settings-panel" id="settingsPanelPersonalize">
+        <div class="modal-subtitle">رنگ تم برنامه</div>
+        <div class="theme-color-grid" id="themeColorGrid"></div>
+
+        <div class="modal-subtitle" style="margin-top:14px;">حالت نمایش</div>
+        <div class="theme-mode-toggle">
+          <button type="button" class="theme-mode-btn" data-mode="dark"><i class="fa-solid fa-moon"></i> تیره</button>
+          <button type="button" class="theme-mode-btn" data-mode="light"><i class="fa-solid fa-sun"></i> روشن</button>
+        </div>
+
+        <div class="modal-subtitle" style="margin-top:14px;">نوتیفیکیشن</div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="notificationsEnabledCheckbox" checked>
+          <span>نمایش نوتیفیکیشن برای پیام‌های جدید</span>
+        </label>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<!-- منوی کلیکی روی پیام (پاسخ / ویرایش / حذف) -->
+<div class="message-action-menu hidden" id="messageActionMenu">
+  <div class="quick-reaction-row" id="quickReactionRow">
+    <button type="button" data-emoji="👍" title="پسند">👍</button>
+    <button type="button" data-emoji="❤️" title="قلب">❤️</button>
+    <button type="button" data-emoji="😂" title="خنده">😂</button>
+    <button type="button" data-emoji="😮" title="تعجب">😮</button>
+    <button type="button" data-emoji="😢" title="ناراحت">😢</button>
+    <button type="button" data-emoji="🙏" title="تشکر">🙏</button>
+    <button type="button" data-emoji="🔥" title="آتیش">🔥</button>
+    <button type="button" data-emoji="🎉" title="تبریک">🎉</button>
+  </div>
+  <button type="button" data-action="reply" id="messageActionReply"><i class="fa-solid fa-reply"></i> پاسخ دادن</button>
+  <button type="button" data-action="copy" id="messageActionCopy"><i class="fa-solid fa-copy"></i> کپی متن</button>
+  <button type="button" data-action="forward" id="messageActionForward"><i class="fa-solid fa-share"></i> فوروارد</button>
+  <button type="button" data-action="pin" id="messageActionPin"><i class="fa-solid fa-thumbtack"></i> پین کردن</button>
+  <button type="button" data-action="edit" id="messageActionEdit"><i class="fa-solid fa-pen"></i> ویرایش</button>
+  <button type="button" data-action="delete" id="messageActionDelete"><i class="fa-solid fa-trash"></i> حذف</button>
+</div>
+
+<!-- مودال فوروارد پیام -->
+<div class="modal-overlay hidden" id="forwardModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>فوروارد پیام</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="forward-target-row" id="forwardSavedRow">
+        <input type="checkbox" id="forwardToSavedCheckbox">
+        <div class="avatar saved-messages-avatar" style="width:38px;height:38px;font-size:15px;"><i class="fa-solid fa-bookmark"></i></div>
+        <span class="forward-target-name">پیام‌های ذخیره‌شده</span>
+      </div>
+      <div class="modal-subtitle">ارسال به گفتگوها</div>
+      <div class="forward-chat-list" id="forwardChatList"></div>
+      <button class="btn-primary" id="submitForward">ارسال</button>
+      <div class="auth-error" id="forwardError"></div>
+    </div>
+  </div>
+</div>
+
+<!-- مودال ساخت نظرسنجی -->
+<div class="modal-overlay hidden" id="createPollModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>نظرسنجی جدید</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="poll-type-toggle">
+        <button type="button" class="poll-type-btn active" data-poll-type="regular"><i class="fa-solid fa-square-poll-vertical"></i> نظرسنجی ساده</button>
+        <button type="button" class="poll-type-btn" data-poll-type="quiz"><i class="fa-solid fa-graduation-cap"></i> آزمون</button>
+      </div>
+
+      <input type="text" id="pollQuestionInput" placeholder="سوال نظرسنجی را بنویسید" class="modal-input">
+
+      <div class="modal-subtitle" id="pollOptionsLabel">گزینه‌ها</div>
+      <div class="poll-options-editor" id="pollOptionsEditor"></div>
+      <button type="button" class="btn-secondary" id="addPollOptionBtn"><i class="fa-solid fa-plus"></i> افزودن گزینه</button>
+
+      <p class="poll-quiz-hint hidden" id="pollQuizHint">با زدن دایره‌ی کنار هر گزینه، جواب درست آزمون را مشخص کنید.</p>
+
+      <button class="btn-primary" id="submitPoll">ایجاد نظرسنجی</button>
+      <div class="auth-error" id="pollError"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== لایه تماس صوتی ===================== -->
+<div class="call-overlay hidden" id="callOverlay">
+  <div class="call-backdrop"></div>
+  <div class="call-card">
+    <div class="call-avatar-wrap">
+      <div class="avatar avatar-xl" id="callAvatar"></div>
+      <div class="call-pulse"></div>
+    </div>
+    <div class="call-name" id="callName"></div>
+    <div class="call-status" id="callStatus">در حال تماس...</div>
+    <div class="call-timer hidden" id="callTimer">۰۰:۰۰</div>
+    <div class="call-actions">
+      <button type="button" class="call-btn mute hidden" id="callMuteBtn" title="بی‌صدا کردن میکروفون">
+        <i class="fa-solid fa-microphone"></i>
+      </button>
+      <button type="button" class="call-btn reject" id="callRejectBtn" title="پایان تماس">
+        <i class="fa-solid fa-phone-slash"></i>
+      </button>
+      <button type="button" class="call-btn accept hidden" id="callAcceptBtn" title="پاسخ دادن">
+        <i class="fa-solid fa-phone"></i>
+      </button>
+    </div>
+  </div>
+  <audio id="remoteAudio" autoplay></audio>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
