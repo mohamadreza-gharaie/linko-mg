@@ -20,7 +20,11 @@ FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), "frontend")
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")\n\n# Initialize database tables when running under Gunicorn/Render too\ninit_db()
+app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
+
+# Initialize database tables when running under Gunicorn/Render too
+init_db()
+
 app.secret_key = os.environ.get("SECRET_KEY", "please-change-this-secret-key-in-production")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 # Keep people logged in across browser restarts, so they only need to sign in once.
