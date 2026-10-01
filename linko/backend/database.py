@@ -37,25 +37,6 @@ class CursorWrapper:
     def __init__(self, cursor):
         self._cursor = cursor
 
-    @property
-    def lastrowid(self):
-        # PostgreSQL has no DB-API lastrowid. Every Linko INSERT uses an
-        # auto-generated `id`, so read the sequence value from this connection.
-        query = self._cursor.query
-        if isinstance(query, bytes):
-            query = query.decode("utf-8", "replace")
-        match = re.search(r"\bINSERT\s+INTO\s+([a-zA-Z_][a-zA-Z0-9_]*)\b", query or "", re.I)
-        if not match:
-            raise AttributeError("lastrowid is only available after an INSERT")
-        table = match.group(1)
-        with self._cursor.connection.cursor() as c:
-            c.execute(
-                "SELECT currval(pg_get_serial_sequence(%s, 'id')) AS id",
-                (table,),
-            )
-            row = c.fetchone()
-            return row["id"] if row else None
-
     def __getattr__(self, name):
         return getattr(self._cursor, name)
 

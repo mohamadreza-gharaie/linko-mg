@@ -294,12 +294,12 @@ def register():
         return jsonify({"error": "این نام کاربری قبلاً ثبت شده است"}), 400
 
     color = random.choice(AVATAR_COLORS)
-    cur = db.execute(
-        "INSERT INTO users (username, password_hash, display_name, avatar_color) VALUES (?, ?, ?, ?)",
+    inserted = db.execute(
+        "INSERT INTO users (username, password_hash, display_name, avatar_color) VALUES (?, ?, ?, ?) RETURNING id",
         (username, generate_password_hash(password), display_name, color),
-    )
+    ).fetchone()
     db.commit()
-    user_id = cur.lastrowid
+    user_id = inserted["id"]
     db.close()
 
     session["user_id"] = user_id
@@ -424,10 +424,10 @@ def create_private_chat():
     if existing:
         chat_id = existing["id"]
     else:
-        cur = db.execute(
-            "INSERT INTO chats (type, owner_id) VALUES ('private', ?)", (uid,)
-        )
-        chat_id = cur.lastrowid
+        row = db.execute(
+            "INSERT INTO chats (type, owner_id) VALUES ('private', ?) RETURNING id", (uid,)
+        ).fetchone()
+        chat_id = row["id"]
         db.execute("INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, 'member')", (chat_id, uid))
         db.execute("INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, 'member')", (chat_id, other_id))
         db.commit()
@@ -450,11 +450,11 @@ def create_group():
         return jsonify({"error": "نام گروه الزامی است"}), 400
 
     db = get_db()
-    cur = db.execute(
-        "INSERT INTO chats (type, name, description, owner_id) VALUES ('group', ?, ?, ?)",
+    row = db.execute(
+        "INSERT INTO chats (type, name, description, owner_id) VALUES ('group', ?, ?, ?) RETURNING id",
         (name, data.get("description", ""), uid),
-    )
-    chat_id = cur.lastrowid
+    ).fetchone()
+    chat_id = row["id"]
     db.execute("INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, 'owner')", (chat_id, uid))
     for mid in member_ids:
         if int(mid) != uid:
@@ -483,11 +483,11 @@ def create_channel():
         return jsonify({"error": "نام کانال الزامی است"}), 400
 
     db = get_db()
-    cur = db.execute(
-        "INSERT INTO chats (type, name, description, is_public, open_chat, owner_id) VALUES ('channel', ?, ?, ?, ?, ?)",
+    row = db.execute(
+        "INSERT INTO chats (type, name, description, is_public, open_chat, owner_id) VALUES ('channel', ?, ?, ?, ?, ?) RETURNING id",
         (name, data.get("description", ""), is_public, open_chat, uid),
-    )
-    chat_id = cur.lastrowid
+    ).fetchone()
+    chat_id = row["id"]
     db.execute("INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, 'owner')", (chat_id, uid))
     for mid in member_ids:
         if int(mid) != uid:
@@ -1112,17 +1112,17 @@ def forward_message(message_id):
             skipped_chats += 1
             continue
 
-        cur = db.execute(
+        inserted = db.execute(
             """INSERT INTO messages (chat_id, sender_id, content, message_type, file_url, file_name, file_size, forwarded_from_name)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (chat_id, uid, original["content"], original["message_type"],
              original["file_url"], original["file_name"], original["file_size"], origin_name),
-        )
+        ).fetchone()
         db.commit()
         new_row = db.execute(
             """SELECT m.*, u.display_name as sender_name, u.avatar_color as sender_color, u.avatar_url as sender_avatar
                FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id=?""",
-            (cur.lastrowid,),
+            (inserted["id"],),
         ).fetchone()
         payload = serialize_message(db, new_row)
         socketio.emit("new_message", payload, room=f"chat_{chat_id}")
@@ -1289,13 +1289,13 @@ def create_saved_item():
         return jsonify({"error": "فایل ارسال نشده است"}), 400
 
     db = get_db()
-    cur = db.execute(
+    inserted = db.execute(
         """INSERT INTO saved_items (user_id, content, message_type, file_url, file_name, file_size)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
         (uid, content, message_type, file_url, file_name, file_size),
-    )
+    ).fetchone()
     db.commit()
-    row = db.execute("SELECT * FROM saved_items WHERE id=?", (cur.lastrowid,)).fetchone()
+    row = db.execute("SELECT * FROM saved_items WHERE id=?", (inserted["id"],)).fetchone()
     db.close()
     return jsonify(serialize_saved_item(row))
 
@@ -1396,25 +1396,25 @@ def create_poll(chat_id):
         db.close()
         return jsonify({"error": "شما اجازه ارسال پیام در این کانال را ندارید"}), 403
 
-    cur = db.execute(
-        "INSERT INTO messages (chat_id, sender_id, content, message_type) VALUES (?, ?, ?, 'poll')",
+    message_row = db.execute(
+        "INSERT INTO messages (chat_id, sender_id, content, message_type) VALUES (?, ?, ?, 'poll') RETURNING id",
         (chat_id, uid, question),
-    )
-    message_id = cur.lastrowid
+    ).fetchone()
+    message_id = message_row["id"]
 
-    cur2 = db.execute(
-        "INSERT INTO polls (message_id, chat_id, creator_id, question, poll_type) VALUES (?, ?, ?, ?, ?)",
+    poll_row = db.execute(
+        "INSERT INTO polls (message_id, chat_id, creator_id, question, poll_type) VALUES (?, ?, ?, ?, ?) RETURNING id",
         (message_id, chat_id, uid, question, poll_type),
-    )
-    poll_id = cur2.lastrowid
+    ).fetchone()
+    poll_id = poll_row["id"]
 
     option_ids = []
     for idx, text in enumerate(options):
-        c = db.execute(
-            "INSERT INTO poll_options (poll_id, option_text, option_order) VALUES (?, ?, ?)",
+        option_row = db.execute(
+            "INSERT INTO poll_options (poll_id, option_text, option_order) VALUES (?, ?, ?) RETURNING id",
             (poll_id, text, idx),
-        )
-        option_ids.append(c.lastrowid)
+        ).fetchone()
+        option_ids.append(option_row["id"])
 
     if poll_type == "quiz":
         db.execute(
@@ -1873,13 +1873,13 @@ def on_send_message(data):
         if not reply_check:
             reply_to_id = None
 
-    cur = db.execute(
+    inserted = db.execute(
         """INSERT INTO messages (chat_id, sender_id, content, message_type, file_url, file_name, file_size, reply_to_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
         (chat_id, uid, content, message_type, file_url, file_name, file_size, reply_to_id),
-    )
+    ).fetchone()
     db.commit()
-    msg_id = cur.lastrowid
+    msg_id = inserted["id"]
     row = db.execute(
         """SELECT m.*, u.display_name as sender_name, u.avatar_color as sender_color, u.avatar_url as sender_avatar
            FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id=?""",
