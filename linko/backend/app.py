@@ -22,14 +22,47 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
-# Initialize database tables when running under Gunicorn/Render too
-init_db()
-
 app.secret_key = os.environ.get("SECRET_KEY", "please-change-this-secret-key-in-production")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 # Keep people logged in across browser restarts, so they only need to sign in once.
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=90)
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 60 مگابایت سقف حجم هر فایل
+
+# PostgreSQL is the durable store. Uploaded media deliberately lives only on the
+# web service filesystem and is therefore disposable on restart/sleep.
+def cleanup_ephemeral_media():
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    # Remove files from the current ephemeral filesystem.
+    for name in os.listdir(UPLOAD_DIR):
+        path = os.path.join(UPLOAD_DIR, name)
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+    # Media metadata is disposable too. Keep the durable message/user/chat data,
+    # but do not leave broken links to files that no longer exist.
+    db = get_db()
+    try:
+        db.execute(
+            "DELETE FROM messages WHERE message_type IN ('image', 'video', 'voice', 'file')"
+        )
+        db.execute(
+            "DELETE FROM saved_items WHERE message_type IN ('image', 'video', 'voice', 'file')"
+        )
+        # Avatars are also images, so profile/chat avatar files are ephemeral.
+        db.execute("UPDATE users SET avatar_url=NULL")
+        db.execute("UPDATE chats SET avatar_url=NULL")
+        db.commit()
+    finally:
+        db.close()
+
+
+# Initialize PostgreSQL tables before Gunicorn begins serving requests.
+init_db()
+cleanup_ephemeral_media()
 
 CORS(app, supports_credentials=True)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading",
@@ -1964,7 +1997,6 @@ def on_call_reject(data):
 
 
 if __name__ == "__main__":
-    init_db()
     print("=" * 60)
     print("سرور لینکو (Linko) در حال اجراست")
     print("آدرس: http://127.0.0.1:5000")
