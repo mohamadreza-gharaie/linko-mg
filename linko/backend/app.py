@@ -1833,10 +1833,63 @@ def on_disconnect():
         broadcast_presence(uid, False, row["last_seen"] if row else None)
 
 
+@app.route("/api/chats/<int:chat_id>/messages", methods=["POST"])
+@login_required
+def send_message_rest(chat_id):
+    uid = current_user_id()
+    data = request.get_json(force=True) or {}
+    content = (data.get("content") or "").strip()
+    message_type = data.get("message_type") or "text"
+    reply_to_id = data.get("reply_to_id")
+
+    if message_type != "text":
+        return jsonify({"error": "ارسال این نوع پیام از این مسیر پشتیبانی نمی‌شود"}), 400
+    if not content:
+        return jsonify({"error": "متن پیام خالی است"}), 400
+
+    db = get_db()
+    membership = is_member(db, chat_id, uid)
+    if not membership:
+        db.close()
+        return jsonify({"error": "دسترسی به این گفتگو ندارید"}), 403
+
+    chat = db.execute("SELECT type, open_chat FROM chats WHERE id=?", (chat_id,)).fetchone()
+    if not can_post_in_chat(chat, membership):
+        db.close()
+        return jsonify({"error": "فقط مالک و مدیران این کانال می‌توانند پیام ارسال کنند"}), 403
+
+    if reply_to_id:
+        reply_check = db.execute(
+            "SELECT id FROM messages WHERE id=? AND chat_id=?", (reply_to_id, chat_id)
+        ).fetchone()
+        if not reply_check:
+            reply_to_id = None
+
+    inserted = db.execute(
+        """INSERT INTO messages (chat_id, sender_id, content, message_type, reply_to_id)
+           VALUES (?, ?, ?, 'text', ?) RETURNING id""",
+        (chat_id, uid, content, reply_to_id),
+    ).fetchone()
+    db.commit()
+    msg_id = inserted["id"]
+    row = db.execute(
+        """SELECT m.*, u.display_name as sender_name, u.avatar_color as sender_color, u.avatar_url as sender_avatar
+           FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id=?""",
+        (msg_id,),
+    ).fetchone()
+    payload = serialize_message(db, row)
+    db.close()
+
+    socketio.emit("new_message", payload, room=f"chat_{chat_id}")
+    return jsonify(payload)
+
+
 @socketio.on("send_message")
-def on_send_message(data):
+def on_send_message(data, callback=None):
     uid = session.get("user_id")
     if not uid:
+        if callback:
+            callback({"ok": False, "error": "نشست کاربری منقضی شده است"})
         return
     chat_id = data.get("chat_id")
     content = (data.get("content") or "").strip()
@@ -1847,22 +1900,27 @@ def on_send_message(data):
     reply_to_id = data.get("reply_to_id")
 
     if not chat_id:
+        if callback: callback({"ok": False, "error": "گفتگو نامعتبر است"})
         return
     if message_type == "text" and not content:
+        if callback: callback({"ok": False, "error": "متن پیام خالی است"})
         return
     if message_type != "text" and not file_url:
+        if callback: callback({"ok": False, "error": "فایل پیام نامعتبر است"})
         return
 
     db = get_db()
     membership = is_member(db, chat_id, uid)
     if not membership:
         db.close()
+        if callback: callback({"ok": False, "error": "دسترسی به این گفتگو ندارید"})
         return
 
     chat = db.execute("SELECT type, open_chat FROM chats WHERE id=?", (chat_id,)).fetchone()
     if not can_post_in_chat(chat, membership):
         db.close()
         emit("send_error", {"chat_id": chat_id, "reason": "channel_restricted"})
+        if callback: callback({"ok": False, "error": "فقط مالک و مدیران این کانال می‌توانند پیام ارسال کنند"})
         return
 
     # A reply must point to a real message inside the very same chat
@@ -1889,6 +1947,7 @@ def on_send_message(data):
     db.close()
 
     emit("new_message", payload, room=f"chat_{chat_id}")
+    if callback: callback({"ok": True, "message_id": msg_id})
 
 
 @socketio.on("join_chat")

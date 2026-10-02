@@ -1213,6 +1213,29 @@ mark.msg-highlight {
 @media (max-width: 768px) {
   .app-screen { position: relative; }
 
+  .sidebar-header {
+    padding: 8px 10px;
+    min-height: 56px;
+  }
+  .sidebar-header .avatar {
+    width: 36px;
+    height: 36px;
+    font-size: 14px;
+  }
+  .sidebar-header .me-info { gap: 8px; }
+  .sidebar-header .me-name { font-size: 14px; }
+
+  .chat-header {
+    padding: 7px 10px;
+    min-height: 54px;
+    gap: 8px;
+  }
+  .chat-header .avatar {
+    width: 36px;
+    height: 36px;
+    font-size: 14px;
+  }
+
   .sidebar {
     width: 100%;
     min-width: 100%;

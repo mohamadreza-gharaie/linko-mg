@@ -234,7 +234,19 @@ async function tryAutoLogin() {
 // Socket.IO
 // ============================================================
 function connectSocket() {
-  socket = io({ withCredentials: true });
+  socket = io({ withCredentials: true, reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 500 });
+
+  socket.on("connect", () => {
+    // Re-join every chat after an initial connection or automatic reconnect.
+    // This prevents a temporarily dropped Socket.IO connection from making
+    // new messages invisible until the page is refreshed.
+    chats.forEach(chat => socket.emit("join_chat", { chat_id: chat.id }));
+  });
+
+  socket.on("connect_error", () => {
+    // Socket.IO will automatically retry; REST fallback below keeps text
+    // messages functional even while the realtime connection is unavailable.
+  });
 
   socket.on("new_message", (msg) => {
     updateChatListWithMessage(msg);
@@ -1403,9 +1415,49 @@ $("messageForm").addEventListener("submit", async (e) => {
   }
 
   const replyToId = replyingToMessage ? replyingToMessage.id : undefined;
-  socket.emit("send_message", { chat_id: activeChat.id, content, message_type: "text", reply_to_id: replyToId });
-  input.innerHTML = "";
-  cancelReplyOrEdit();
+  const payload = { chat_id: activeChat.id, content, message_type: "text", reply_to_id: replyToId };
+
+  // Prefer Socket.IO for instant delivery. If the realtime connection is not
+  // ready, or the server rejects the socket request, use the REST endpoint.
+  const sendViaRest = async () => {
+    const sent = await api(`/chats/${activeChat.id}/messages`, {
+      method: "POST",
+      body: { content, message_type: "text", reply_to_id: replyToId },
+    });
+    return sent;
+  };
+
+  try {
+    if (!socket || !socket.connected) {
+      await sendViaRest();
+    } else {
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (fn, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          fn(value);
+        };
+        const timer = setTimeout(() => finish(reject, new Error("اتصال لحظه‌ای آماده نیست")), 5000);
+        socket.emit("send_message", payload, (result) => {
+          if (result && result.ok) finish(resolve, result);
+          else finish(reject, new Error((result && result.error) || "ارسال پیام ناموفق بود"));
+        });
+      });
+    }
+    input.innerHTML = "";
+    cancelReplyOrEdit();
+  } catch (err) {
+    // If the socket path failed, try once through HTTP before showing an error.
+    try {
+      await sendViaRest();
+      input.innerHTML = "";
+      cancelReplyOrEdit();
+    } catch (fallbackErr) {
+      showToast(fallbackErr.message || err.message || "ارسال پیام ناموفق بود");
+    }
+  }
 });
 
 $("messageInput").addEventListener("keydown", (e) => {
@@ -1753,9 +1805,15 @@ $("submitProfile").addEventListener("click", async () => {
   if (pendingAvatarFile) formData.append("avatar", pendingAvatarFile);
 
   try {
-    const res = await fetch(API + "/profile", { method: "POST", credentials: "include", body: formData });
-    const updated = await res.json();
+    const res = await fetch(API + "/profile", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      body: formData,
+    });
+    const updated = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(updated.error || "خطا در ذخیره پروفایل");
+    if (!updated || !updated.id) throw new Error("سرور پاسخ معتبر برای پروفایل برنگرداند");
 
     me = updated;
     fillAvatarEl($("meAvatar"), { avatar_url: me.avatar_url, avatar_color: me.avatar_color, name: me.display_name });
