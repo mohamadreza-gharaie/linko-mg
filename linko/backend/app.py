@@ -68,6 +68,34 @@ CORS(app, supports_credentials=True)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading",
                      max_http_buffer_size=60 * 1024 * 1024)
 
+
+def _socket_json_safe(value):
+    """Convert PostgreSQL values such as datetime into Socket.IO JSON-safe values."""
+    from datetime import date, datetime
+
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _socket_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_socket_json_safe(item) for item in value]
+    return value
+
+
+_original_socketio_emit = socketio.emit
+
+def _safe_socketio_emit(event, data=None, *args, **kwargs):
+    return _original_socketio_emit(
+        event, _socket_json_safe(data), *args, **kwargs
+    )
+
+
+# PostgreSQL returns TIMESTAMPTZ values as Python datetime objects.
+# Flask's jsonify handles those values, but Socket.IO's JSON encoder does not.
+# Normalize every Socket.IO payload in one place so real-time updates never fail
+# just because a payload contains last_seen/created_at/pinned_at/etc.
+socketio.emit = _safe_socketio_emit
+
 AVATAR_COLORS = ["#4e89ff", "#ff6b6b", "#2ecc71", "#f39c12", "#9b59b6",
                   "#1abc9c", "#e74c3c", "#3498db", "#e67e22", "#16a085"]
 
