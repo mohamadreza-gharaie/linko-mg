@@ -38,6 +38,7 @@ let selectedNewMembers = new Map();
 let selectedAddMembers = new Map();
 let createChatMode = "group"; // 'group' | 'channel'
 let typingTimeout = null;
+let sendingMessage = false; // prevents accidental double-clicks from sending twice
 
 // ============================================================
 // Helpers
@@ -108,13 +109,31 @@ function showToast(msg) {
   setTimeout(() => t.classList.add("hidden"), 2500);
 }
 
+function parseServerDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const text = String(value);
+  // New API responses use ISO timestamps with an explicit timezone.
+  if (/([zZ]|[+-]\d{2}:?\d{2})$/.test(text)) {
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  // Backward compatibility for older saved values such as "YYYY-MM-DD HH:mm:ss".
+  const legacy = new Date(text.replace(" ", "T") + "Z");
+  if (!Number.isNaN(legacy.getTime())) return legacy;
+  const fallback = new Date(text);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
 function formatTime(iso) {
-  const d = new Date(iso.replace(" ", "T") + "Z");
+  const d = parseServerDate(iso);
+  if (!d) return "";
   return d.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatChatListTime(iso) {
-  const d = new Date(iso.replace(" ", "T") + "Z");
+  const d = parseServerDate(iso);
+  if (!d) return "";
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   if (sameDay) return d.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" });
@@ -125,8 +144,8 @@ function formatChatListTime(iso) {
 // Online / offline presence + "last seen" text
 // ============================================================
 function relativeTimeFa(iso) {
-  if (!iso) return null;
-  const d = new Date(iso.replace(" ", "T") + "Z");
+  const d = parseServerDate(iso);
+  if (!d) return null;
   const diffMs = Date.now() - d.getTime();
   const diffMin = Math.floor(diffMs / 60000);
   if (diffMin < 1) return "چند لحظه پیش";
@@ -770,12 +789,13 @@ async function openChat(chat) {
   $("messagesContainer").innerHTML = "";
   let lastDay = null;
   messages.forEach(m => {
-    const day = m.created_at.split(" ")[0];
+    const parsedDay = parseServerDate(m.created_at);
+    const day = parsedDay ? parsedDay.toLocaleDateString("fa-IR", { year: "numeric", month: "long", day: "numeric" }) : "";
     if (day !== lastDay) {
       lastDay = day;
       const divider = document.createElement("div");
       divider.className = "day-divider";
-      divider.innerHTML = `<span>${day}</span>`;
+      divider.innerHTML = `<span>${escapeHtml(day)}</span>`;
       $("messagesContainer").appendChild(divider);
     }
     renderMessage(m, false);
@@ -1392,7 +1412,7 @@ $("messageForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = $("messageInput");
   const plainText = input.textContent.trim();
-  if (!plainText || !activeChat) return;
+  if (!plainText || !activeChat || sendingMessage) return;
   const content = serializeComposeNode(input).trim();
 
   if (editingMessage) {
@@ -1416,15 +1436,17 @@ $("messageForm").addEventListener("submit", async (e) => {
 
   const replyToId = replyingToMessage ? replyingToMessage.id : undefined;
   const payload = { chat_id: activeChat.id, content, message_type: "text", reply_to_id: replyToId };
+  sendingMessage = true;
 
-  // Prefer Socket.IO for instant delivery. If the realtime connection is not
-  // ready, or the server rejects the socket request, use the REST endpoint.
+  // Use Socket.IO when it is connected. If it is disconnected, use REST.
+  // Do NOT retry REST after a socket timeout: the server may already have
+  // committed the message while the acknowledgement was delayed, which
+  // would create a duplicate message.
   const sendViaRest = async () => {
-    const sent = await api(`/chats/${activeChat.id}/messages`, {
+    return await api(`/chats/${activeChat.id}/messages`, {
       method: "POST",
       body: { content, message_type: "text", reply_to_id: replyToId },
     });
-    return sent;
   };
 
   try {
@@ -1439,7 +1461,9 @@ $("messageForm").addEventListener("submit", async (e) => {
           clearTimeout(timer);
           fn(value);
         };
-        const timer = setTimeout(() => finish(reject, new Error("اتصال لحظه‌ای آماده نیست")), 5000);
+        // The server acknowledgement is expected quickly. If it does not
+        // arrive, fail without sending the same message through REST.
+        const timer = setTimeout(() => finish(reject, new Error("تأیید ارسال پیام دریافت نشد؛ لطفاً اتصال را بررسی و دوباره تلاش کنید")), 10000);
         socket.emit("send_message", payload, (result) => {
           if (result && result.ok) finish(resolve, result);
           else finish(reject, new Error((result && result.error) || "ارسال پیام ناموفق بود"));
@@ -1449,14 +1473,9 @@ $("messageForm").addEventListener("submit", async (e) => {
     input.innerHTML = "";
     cancelReplyOrEdit();
   } catch (err) {
-    // If the socket path failed, try once through HTTP before showing an error.
-    try {
-      await sendViaRest();
-      input.innerHTML = "";
-      cancelReplyOrEdit();
-    } catch (fallbackErr) {
-      showToast(fallbackErr.message || err.message || "ارسال پیام ناموفق بود");
-    }
+    showToast(err.message || "ارسال پیام ناموفق بود");
+  } finally {
+    sendingMessage = false;
   }
 });
 

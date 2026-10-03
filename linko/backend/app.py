@@ -161,7 +161,7 @@ def user_chat_ids(uid):
 
 
 def broadcast_presence(uid, online, last_seen=None):
-    payload = {"user_id": uid, "online": online, "last_seen": last_seen}
+    payload = {"user_id": uid, "online": online, "last_seen": json_time(last_seen)}
     for chat_id in user_chat_ids(uid):
         socketio.emit("presence_update", payload, room=f"chat_{chat_id}")
 
@@ -182,6 +182,15 @@ def current_user_id():
     return session.get("user_id")
 
 
+def json_time(value):
+    """Return PostgreSQL date/time values in one stable ISO format for API/Socket.IO."""
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 def user_public(row):
     keys = row.keys()
     return {
@@ -192,7 +201,7 @@ def user_public(row):
         "avatar_url": row["avatar_url"] if "avatar_url" in keys else None,
         "bio": row["bio"] if "bio" in keys else "",
         "online": is_user_online(row["id"]),
-        "last_seen": row["last_seen"] if "last_seen" in keys else None,
+        "last_seen": json_time(row["last_seen"]) if "last_seen" in keys else None,
         "theme_color": row["theme_color"] if "theme_color" in keys else "blue",
         "theme_mode": row["theme_mode"] if "theme_mode" in keys else "dark",
         "notifications_enabled": bool(row["notifications_enabled"]) if "notifications_enabled" in keys else True,
@@ -256,7 +265,7 @@ def chat_display_for_user(db, chat, user_id):
         result["avatar_url"] = other["avatar_url"] if other else None
         result["peer_id"] = other["id"] if other else None
         result["online"] = is_user_online(other["id"]) if other else False
-        result["last_seen"] = other["last_seen"] if other else None
+        result["last_seen"] = json_time(other["last_seen"]) if other else None
     else:
         result["name"] = chat["name"]
         result["avatar_color"] = "#4e89ff"
@@ -273,7 +282,7 @@ def chat_display_for_user(db, chat, user_id):
             "id": last_msg["id"],
             "content": message_preview_text(last_msg["message_type"], last_msg["content"], last_msg["file_name"]),
             "message_type": last_msg["message_type"],
-            "created_at": last_msg["created_at"],
+            "created_at": json_time(last_msg["created_at"]),
             "sender_name": last_msg["sender_name"],
             "sender_id": last_msg["sender_id"],
         }
@@ -1005,8 +1014,8 @@ def serialize_message(db, r, viewer_id=None):
         "file_url": r["file_url"],
         "file_name": r["file_name"],
         "file_size": r["file_size"],
-        "created_at": r["created_at"],
-        "edited_at": r["edited_at"] if "edited_at" in r.keys() else None,
+        "created_at": json_time(r["created_at"]),
+        "edited_at": json_time(r["edited_at"]) if "edited_at" in r.keys() else None,
         "forwarded_from_name": r["forwarded_from_name"] if "forwarded_from_name" in r.keys() else None,
         "reply_to": fetch_reply_preview(db, r["reply_to_id"] if "reply_to_id" in r.keys() else None),
         "reactions": get_reactions_summary(db, r["id"]),
@@ -1185,7 +1194,7 @@ def serialize_pin(db, pin_row):
     return {
         "message_id": pin_row["message_id"],
         "pinned_by": pin_row["pinned_by"],
-        "pinned_at": pin_row["pinned_at"],
+        "pinned_at": json_time(pin_row["pinned_at"]),
         "sender_name": msg["sender_name"],
         "message_type": msg["message_type"],
         "preview": message_preview_text(msg["message_type"], msg["content"], msg["file_name"]),
@@ -1285,8 +1294,8 @@ def serialize_saved_item(r):
         "file_name": r["file_name"],
         "file_size": r["file_size"],
         "forwarded_from_name": r["forwarded_from_name"],
-        "edited_at": r["edited_at"],
-        "created_at": r["created_at"],
+        "edited_at": json_time(r["edited_at"]),
+        "created_at": json_time(r["created_at"]),
     }
 
 
