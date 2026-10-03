@@ -1465,8 +1465,11 @@ $("messageForm").addEventListener("submit", async (e) => {
         // arrive, fail without sending the same message through REST.
         const timer = setTimeout(() => finish(reject, new Error("تأیید ارسال پیام دریافت نشد؛ لطفاً اتصال را بررسی و دوباره تلاش کنید")), 10000);
         socket.emit("send_message", payload, (result) => {
-          if (result && result.ok) finish(resolve, result);
-          else finish(reject, new Error((result && result.error) || "ارسال پیام ناموفق بود"));
+          if (result && result.ok) {
+            finish(resolve, result);
+          } else {
+            finish(reject, new Error((result && result.error) || "ارسال پیام ناموفق بود"));
+          }
         });
       });
     }

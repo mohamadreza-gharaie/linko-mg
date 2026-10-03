@@ -9,7 +9,7 @@ from functools import wraps
 
 from flask import Flask, request, session, jsonify, send_from_directory
 from flask_cors import CORS
-from flask_socketio import SocketIO, join_room, emit
+from flask_socketio import SocketIO, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -1956,7 +1956,7 @@ def on_send_message(data, callback=None):
     chat = db.execute("SELECT type, open_chat FROM chats WHERE id=?", (chat_id,)).fetchone()
     if not can_post_in_chat(chat, membership):
         db.close()
-        emit("send_error", {"chat_id": chat_id, "reason": "channel_restricted"})
+        socketio.emit("send_error", {"chat_id": chat_id, "reason": "channel_restricted"})
         if callback: callback({"ok": False, "error": "فقط مالک و مدیران این کانال می‌توانند پیام ارسال کنند"})
         return
 
@@ -1983,7 +1983,7 @@ def on_send_message(data, callback=None):
     payload = serialize_message(db, row)
     db.close()
 
-    emit("new_message", payload, room=f"chat_{chat_id}")
+    socketio.emit("new_message", payload, room=f"chat_{chat_id}")
     if callback: callback({"ok": True, "message_id": msg_id})
 
 
@@ -2006,7 +2006,7 @@ def on_typing(data):
     if not uid:
         return
     chat_id = data.get("chat_id")
-    emit("typing", {"chat_id": chat_id, "user_id": uid}, room=f"chat_{chat_id}", include_self=False)
+    socketio.emit("typing", {"chat_id": chat_id, "user_id": uid}, room=f"chat_{chat_id}", include_self=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2027,7 +2027,7 @@ def on_call_offer(data):
         return
 
     if not is_user_online(to_user_id):
-        emit("call_failed", {"reason": "offline", "to_user_id": to_user_id})
+        socketio.emit("call_failed", {"reason": "offline", "to_user_id": to_user_id})
         return
 
     db = get_db()
@@ -2036,7 +2036,7 @@ def on_call_offer(data):
     ).fetchone()
     db.close()
 
-    emit("incoming_call", {
+    socketio.emit("incoming_call", {
         "from_user_id": uid,
         "from_name": caller["display_name"] if caller else "کاربر",
         "from_avatar_color": caller["avatar_color"] if caller else "#4e89ff",
@@ -2055,7 +2055,7 @@ def on_call_answer(data):
     sdp = data.get("sdp")
     if not to_user_id or not sdp:
         return
-    emit("call_answered", {"sdp": sdp, "from_user_id": uid}, room=f"user_{to_user_id}")
+    socketio.emit("call_answered", {"sdp": sdp, "from_user_id": uid}, room=f"user_{to_user_id}")
 
 
 @socketio.on("call_ice_candidate")
@@ -2067,7 +2067,7 @@ def on_call_ice_candidate(data):
     candidate = data.get("candidate")
     if not to_user_id or not candidate:
         return
-    emit("call_ice_candidate", {"candidate": candidate, "from_user_id": uid}, room=f"user_{to_user_id}")
+    socketio.emit("call_ice_candidate", {"candidate": candidate, "from_user_id": uid}, room=f"user_{to_user_id}")
 
 
 @socketio.on("call_end")
@@ -2078,7 +2078,7 @@ def on_call_end(data):
     to_user_id = data.get("to_user_id")
     if not to_user_id:
         return
-    emit("call_ended", {"from_user_id": uid}, room=f"user_{to_user_id}")
+    socketio.emit("call_ended", {"from_user_id": uid}, room=f"user_{to_user_id}")
 
 
 @socketio.on("call_reject")
@@ -2089,7 +2089,7 @@ def on_call_reject(data):
     to_user_id = data.get("to_user_id")
     if not to_user_id:
         return
-    emit("call_rejected", {"from_user_id": uid}, room=f"user_{to_user_id}")
+    socketio.emit("call_rejected", {"from_user_id": uid}, room=f"user_{to_user_id}")
 
 
 if __name__ == "__main__":
