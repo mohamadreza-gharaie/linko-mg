@@ -122,6 +122,7 @@ def init_db():
                 theme_color TEXT NOT NULL DEFAULT 'blue',
                 theme_mode TEXT NOT NULL DEFAULT 'dark',
                 notifications_enabled INTEGER NOT NULL DEFAULT 1,
+                archive_password_hash TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """,
@@ -143,6 +144,7 @@ def init_db():
                 chat_id BIGINT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
                 user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'admin', 'member')),
+                archived INTEGER NOT NULL DEFAULT 0,
                 last_read_message_id BIGINT NOT NULL DEFAULT 0,
                 joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, user_id)
@@ -245,6 +247,20 @@ def init_db():
         ]
         for statement in indexes:
             conn._conn.execute(statement)
+
+        # Migrate databases created by older Linko versions without touching
+        # existing data. These columns are personal/user-level archive state.
+        migrations = [
+            ("users", "archive_password_hash", "TEXT"),
+            ("chat_members", "archived", "INTEGER NOT NULL DEFAULT 0"),
+        ]
+        for table_name, column_name, column_type in migrations:
+            exists = conn._conn.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=%s AND column_name=%s",
+                (table_name, column_name),
+            ).fetchone()
+            if not exists:
+                conn._conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
         conn.commit()
     finally:

@@ -1272,3 +1272,20 @@ mark.msg-highlight {
 @media (min-width: 769px) {
   .back-btn { display: none; }
 }
+
+/* Secure archive: uses the existing Linko visual language without changing the main layout. */
+.archive-lock-icon {
+  width: 58px;
+  height: 58px;
+  margin: 4px auto 14px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-secondary, rgba(127,127,127,.12));
+  color: var(--accent, #4e89ff);
+  font-size: 25px;
+}
+.archive-list { max-height: 55vh; overflow-y: auto; }
+.archive-list .chat-item { margin-bottom: 4px; }
+.archive-restore-btn { margin-inline-start: auto; flex: 0 0 auto; }

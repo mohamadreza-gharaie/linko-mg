@@ -82,6 +82,18 @@
       </div>
     </div>
 
+    <div class="chat-item saved-messages-item" id="archiveItem" title="بایگانی رمزدار">
+      <div class="avatar saved-messages-avatar"><i class="fa-solid fa-box-archive"></i></div>
+      <div class="chat-item-body">
+        <div class="chat-item-top">
+          <span class="chat-item-name">بایگانی</span>
+        </div>
+        <div class="chat-item-bottom">
+          <span class="chat-item-preview">گفتگوهای خصوصی و قفل‌شده</span>
+        </div>
+      </div>
+    </div>
+
     <div class="chat-list" id="chatList"></div>
   </aside>
 
@@ -244,6 +256,7 @@
       <div class="modal-subtitle">اعضا</div>
       <div class="member-list" id="memberList"></div>
       <div class="info-modal-footer">
+        <button class="btn-secondary" id="archiveChatBtn"><i class="fa-solid fa-box-archive"></i> بایگانی گفتگو</button>
         <button class="btn-secondary danger-text hidden" id="leaveChatBtn"><i class="fa-solid fa-arrow-right-from-bracket"></i> خروج از گفتگو</button>
         <button class="btn-secondary danger-text hidden" id="deleteChatBtn"><i class="fa-solid fa-trash"></i> حذف گفتگو</button>
       </div>
@@ -315,6 +328,13 @@
         <input type="password" id="newPassword" placeholder="رمز عبور جدید" class="modal-input">
         <button class="btn-secondary" id="submitPassword"><i class="fa-solid fa-lock"></i> تغییر رمز عبور</button>
         <div class="auth-error" id="passwordError"></div>
+
+        <div class="modal-subtitle" style="margin-top:18px;">بایگانی امن</div>
+        <p class="info-desc">برای بایگانی گفتگوها یک رمز جداگانه تعیین کنید. رمز بایگانی با رمز ورود حساب یکی نیست.</p>
+        <input type="password" id="archivePassword" placeholder="رمز بایگانی (حداقل ۴ کاراکتر)" class="modal-input">
+        <input type="password" id="archivePasswordConfirm" placeholder="تکرار رمز بایگانی" class="modal-input">
+        <button class="btn-secondary" id="submitArchivePassword"><i class="fa-solid fa-box-archive"></i> ذخیره رمز بایگانی</button>
+        <div class="auth-error" id="archivePasswordError"></div>
       </div>
 
       <!-- تب شخصی‌سازی -->
@@ -335,6 +355,37 @@
         </label>
       </div>
 
+    </div>
+  </div>
+</div>
+
+<!-- قفل بایگانی -->
+<div class="modal-overlay hidden" id="archiveLockModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="archiveLockTitle">بایگانی امن</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="archive-lock-icon"><i class="fa-solid fa-shield-halved"></i></div>
+      <p class="info-desc" id="archiveLockHint">برای ورود به بایگانی رمز خود را وارد کنید.</p>
+      <input type="password" id="archiveUnlockPassword" placeholder="رمز بایگانی" class="modal-input" autocomplete="off">
+      <button class="btn-primary" id="unlockArchiveBtn"><i class="fa-solid fa-unlock"></i> ورود به بایگانی</button>
+      <div class="auth-error" id="archiveUnlockError"></div>
+    </div>
+  </div>
+</div>
+
+<!-- فهرست بایگانی -->
+<div class="modal-overlay hidden" id="archiveModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>بایگانی گفتگوها</h3>
+      <button class="icon-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div id="archiveList" class="chat-list archive-list"></div>
+      <div id="archiveEmpty" class="info-desc hidden">بایگانی شما خالی است.</div>
     </div>
   </div>
 </div>

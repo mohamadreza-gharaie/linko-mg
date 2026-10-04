@@ -1769,6 +1769,9 @@ function openProfileModal() {
   $("currentPassword").value = "";
   $("newPassword").value = "";
   $("passwordError").textContent = "";
+  $("archivePassword").value = "";
+  $("archivePasswordConfirm").value = "";
+  $("archivePasswordError").textContent = "";
 
   renderThemeColorGrid();
   updateThemeModeButtons();
@@ -1880,6 +1883,28 @@ $("submitPassword").addEventListener("click", async () => {
     showToast("رمز عبور با موفقیت تغییر کرد");
   } catch (err) {
     $("passwordError").textContent = err.message;
+  }
+});
+
+$("submitArchivePassword").addEventListener("click", async () => {
+  $("archivePasswordError").textContent = "";
+  const password = $("archivePassword").value;
+  const confirmPassword = $("archivePasswordConfirm").value;
+  if (password.length < 4) {
+    $("archivePasswordError").textContent = "رمز بایگانی باید حداقل ۴ کاراکتر باشد";
+    return;
+  }
+  if (password !== confirmPassword) {
+    $("archivePasswordError").textContent = "تکرار رمز با رمز اصلی یکسان نیست";
+    return;
+  }
+  try {
+    await api("/archive/password", { method: "POST", body: { password } });
+    $("archivePassword").value = "";
+    $("archivePasswordConfirm").value = "";
+    showToast("رمز بایگانی با موفقیت ذخیره شد");
+  } catch (err) {
+    $("archivePasswordError").textContent = err.message;
   }
 });
 
@@ -2121,6 +2146,9 @@ $("chatInfoBtn").addEventListener("click", () => {
   const isGroupLike = activeChat.type !== "private";
   $("leaveChatBtn").classList.toggle("hidden", !isGroupLike || activeChatRole === "owner");
   $("deleteChatBtn").classList.toggle("hidden", !isGroupLike || activeChatRole !== "owner");
+  $("archiveChatBtn").innerHTML = activeChat._archived
+    ? '<i class="fa-solid fa-box-open"></i> خارج کردن از بایگانی'
+    : '<i class="fa-solid fa-box-archive"></i> بایگانی گفتگو';
 
   const showChannelToggle = activeChat.type === "channel" && activeChatRole === "owner";
   $("channelOpenChatRow").classList.toggle("hidden", !showChannelToggle);
@@ -2262,6 +2290,114 @@ async function loadChatInfo(chatId) {
     });
   });
 }
+
+async function archiveCurrentChat() {
+  if (!activeChat || !activeChat.id || activeChat.type === "saved") return;
+  const archived = !activeChat._archived;
+  try {
+    await api(`/archive/chats/${activeChat.id}`, { method: "POST", body: { archived } });
+    activeChat._archived = archived;
+    if (archived) {
+      chats = chats.filter(c => c.id !== activeChat.id);
+      closeModals();
+      closeActiveChat();
+      renderChatList(chats);
+      showToast("گفتگو به بایگانی منتقل شد");
+    } else {
+      closeModals();
+      await loadChats();
+      const found = chats.find(c => c.id === activeChat.id);
+      if (found) { found._archived = false; openChat(found); }
+      showToast("گفتگو از بایگانی خارج شد");
+    }
+  } catch (err) {
+    showToast(err.message || "تغییر وضعیت بایگانی ناموفق بود");
+  }
+}
+
+$("archiveChatBtn").addEventListener("click", archiveCurrentChat);
+
+async function renderArchiveList() {
+  const list = $("archiveList");
+  const empty = $("archiveEmpty");
+  list.innerHTML = "";
+  try {
+    const archivedChats = await api("/archive/chats");
+    empty.classList.toggle("hidden", archivedChats.length !== 0);
+    archivedChats.forEach(chat => {
+      chat._archived = true;
+      const el = document.createElement("div");
+      el.className = "chat-item";
+      const preview = chat.last_message
+        ? (chat.last_message.sender_id === me.id ? "شما: " : "") + escapeHtml(stripFormattingTokens(chat.last_message.content))
+        : "گفتگو را شروع کنید";
+      const badge = chat.type === "private" ? "" : `<span class="chat-type-badge">${chat.type === "group" ? "گروه" : "کانال"}</span>`;
+      el.innerHTML = `
+        ${avatarHtml({ avatar_url: chat.avatar_url, avatar_color: chat.avatar_color, name: chat.name, online: chat.type === "private" && chat.online })}
+        <div class="chat-item-body">
+          <div class="chat-item-top"><span class="chat-item-name">${escapeHtml(chat.name)} ${badge}</span></div>
+          <div class="chat-item-bottom"><span class="chat-item-preview">${preview}</span></div>
+        </div>
+        <button type="button" class="icon-btn archive-restore-btn" title="خارج کردن از بایگانی"><i class="fa-solid fa-box-open"></i></button>`;
+      el.addEventListener("click", async (e) => {
+        if (e.target.closest(".archive-restore-btn")) return;
+        closeModals();
+        openChat(chat);
+      });
+      el.querySelector(".archive-restore-btn").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          await api(`/archive/chats/${chat.id}`, { method: "POST", body: { archived: false } });
+          showToast("گفتگو از بایگانی خارج شد");
+          await renderArchiveList();
+          await loadChats();
+        } catch (err) { showToast(err.message); }
+      });
+      list.appendChild(el);
+    });
+  } catch (err) {
+    empty.classList.remove("hidden");
+    empty.textContent = err.message || "بارگذاری بایگانی ناموفق بود";
+  }
+}
+
+async function openArchive() {
+  $("archiveUnlockPassword").value = "";
+  $("archiveUnlockError").textContent = "";
+  $("archiveLockHint").textContent = "برای ورود به بایگانی رمز خود را وارد کنید.";
+  try {
+    await api("/archive/verify", { method: "POST", body: { password: "" } });
+  } catch (err) {
+    if (err && err.message === "هنوز رمز بایگانی تنظیم نشده است") {
+      $("archiveLockHint").textContent = "ابتدا از پروفایل و تنظیمات ← حساب کاربری، یک رمز برای بایگانی تعیین کنید.";
+    }
+  }
+  $("archiveLockModal").classList.remove("hidden");
+  $("archiveUnlockPassword").focus();
+}
+
+$("unlockArchiveBtn").addEventListener("click", async () => {
+  const password = $("archiveUnlockPassword").value;
+  $("archiveUnlockError").textContent = "";
+  if (!password) {
+    $("archiveUnlockError").textContent = "رمز بایگانی را وارد کنید";
+    return;
+  }
+  try {
+    await api("/archive/verify", { method: "POST", body: { password } });
+    $("archiveLockModal").classList.add("hidden");
+    $("archiveModal").classList.remove("hidden");
+    await renderArchiveList();
+  } catch (err) {
+    $("archiveUnlockError").textContent = err.message;
+  }
+});
+
+$("archiveUnlockPassword").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); $("unlockArchiveBtn").click(); }
+});
+
+$("archiveItem").addEventListener("click", openArchive);
 
 $("leaveChatBtn").addEventListener("click", async () => {
   if (!activeChat) return;

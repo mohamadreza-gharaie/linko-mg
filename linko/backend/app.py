@@ -3,6 +3,7 @@ import random
 import re
 import uuid
 import mimetypes
+import time
 from collections import defaultdict
 from datetime import timedelta
 from functools import wraps
@@ -222,11 +223,23 @@ def message_preview_text(message_type, content, file_name):
     return content
 
 
+def archive_is_unlocked():
+    # Archive access is session-bound and expires after 15 minutes. The password
+    # itself is never stored in the session or returned to the browser.
+    unlocked_at = session.get("archive_unlocked_at")
+    try:
+        return bool(unlocked_at and time.time() - float(unlocked_at) < 15 * 60)
+    except (TypeError, ValueError):
+        return False
+
+
 def is_member(db, chat_id, user_id):
     row = db.execute(
         "SELECT * FROM chat_members WHERE chat_id=? AND user_id=?",
         (chat_id, user_id),
     ).fetchone()
+    if row and row.get("archived") and not archive_is_unlocked():
+        return None
     return row
 
 
@@ -420,7 +433,7 @@ def list_chats():
     chats = db.execute(
         """SELECT c.* FROM chats c
            JOIN chat_members cm ON cm.chat_id = c.id
-           WHERE cm.user_id = ?""",
+           WHERE cm.user_id = ? AND COALESCE(cm.archived, 0) = 0""",
         (uid,),
     ).fetchall()
 
@@ -432,6 +445,76 @@ def list_chats():
 
     result.sort(key=sort_key, reverse=True)
     return jsonify(result)
+
+
+@app.route("/api/archive/password", methods=["POST"])
+@login_required
+def set_archive_password():
+    uid = current_user_id()
+    data = request.get_json(force=True) or {}
+    password = data.get("password") or ""
+    if len(password) < 4:
+        return jsonify({"error": "رمز بایگانی باید حداقل ۴ کاراکتر باشد"}), 400
+
+    db = get_db()
+    db.execute("UPDATE users SET archive_password_hash=? WHERE id=?", (generate_password_hash(password), uid))
+    db.commit()
+    db.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/archive/verify", methods=["POST"])
+@login_required
+def verify_archive_password():
+    uid = current_user_id()
+    data = request.get_json(force=True) or {}
+    password = data.get("password") or ""
+    db = get_db()
+    row = db.execute("SELECT archive_password_hash FROM users WHERE id=?", (uid,)).fetchone()
+    db.close()
+    if not row or not row["archive_password_hash"]:
+        return jsonify({"error": "هنوز رمز بایگانی تنظیم نشده است", "needs_setup": True}), 400
+    if not check_password_hash(row["archive_password_hash"], password):
+        return jsonify({"error": "رمز بایگانی اشتباه است"}), 403
+    session["archive_unlocked_at"] = time.time()
+    session.modified = True
+    return jsonify({"ok": True})
+
+
+@app.route("/api/archive/chats", methods=["GET"])
+@login_required
+def list_archived_chats():
+    if not archive_is_unlocked():
+        return jsonify({"error": "ابتدا قفل بایگانی را باز کنید"}), 403
+    uid = current_user_id()
+    db = get_db()
+    rows = db.execute(
+        """SELECT c.* FROM chats c
+           JOIN chat_members cm ON cm.chat_id=c.id
+           WHERE cm.user_id=? AND COALESCE(cm.archived, 0)=1""",
+        (uid,),
+    ).fetchall()
+    result = [chat_display_for_user(db, row, uid) for row in rows]
+    db.close()
+    result.sort(key=lambda c: c["last_message"]["created_at"] if c["last_message"] else "0", reverse=True)
+    return jsonify(result)
+
+
+@app.route("/api/archive/chats/<int:chat_id>", methods=["POST"])
+@login_required
+def set_chat_archived(chat_id):
+    uid = current_user_id()
+    data = request.get_json(force=True) or {}
+    archived = bool(data.get("archived"))
+    db = get_db()
+    membership = is_member(db, chat_id, uid)
+    if not membership:
+        db.close()
+        return jsonify({"error": "دسترسی ندارید"}), 403
+    db.execute("UPDATE chat_members SET archived=? WHERE chat_id=? AND user_id=?", (1 if archived else 0, chat_id, uid))
+    db.commit()
+    db.close()
+    return jsonify({"ok": True, "archived": archived})
 
 
 @app.route("/api/chats/private", methods=["POST"])
@@ -1983,8 +2066,13 @@ def on_send_message(data, callback=None):
     payload = serialize_message(db, row)
     db.close()
 
+    # Acknowledge only after the database commit. The client uses this ACK as the
+    # authoritative success signal; emit the realtime event afterwards so a
+    # transient Socket.IO broadcast problem can never make a saved message look
+    # like a failed send.
+    if callback:
+        callback({"ok": True, "message_id": msg_id})
     socketio.emit("new_message", payload, room=f"chat_{chat_id}")
-    if callback: callback({"ok": True, "message_id": msg_id})
 
 
 @socketio.on("join_chat")
