@@ -32,6 +32,8 @@ let replyingToMessage = null;
 let editingMessage = null;
 let messageActionMenuTargetId = null;
 let inSavedMessages = false; // true while the special "Saved Messages" personal notes view is open
+const AI_ASSISTANT_SENDER_ID = -1;
+let inAiAssistant = false; // true while the AI Assistant chat view is open
 let pinnedMessages = []; // pinned-message summaries for the currently open group/channel
 let forwardMessageId = null;
 let selectedNewMembers = new Map();
@@ -742,16 +744,20 @@ function updateMessageInputAccess() {
   $("messageForm").classList.toggle("hidden", !canPostMessages);
   $("channelReadonlyNotice").classList.toggle("hidden", canPostMessages);
   $("pollBtn").classList.toggle("hidden", !canPostMessages || !["group", "channel"].includes(activeChat.type));
+  $("attachBtn").classList.toggle("hidden", activeChat.type === "ai");
+  $("micBtn").classList.toggle("hidden", activeChat.type === "ai");
   if (!canPostMessages) cancelReplyOrEdit();
 }
 
 async function openChat(chat) {
   activeChat = chat;
   inSavedMessages = false;
+  inAiAssistant = false;
   document.querySelectorAll(".chat-item").forEach(el => {
     el.classList.toggle("active", el.dataset.chatId == chat.id);
   });
   $("savedMessagesItem").classList.remove("active");
+  $("aiAssistantItem").classList.remove("active");
 
   $("emptyState").classList.add("hidden");
   $("chatWindow").classList.remove("hidden");
@@ -759,6 +765,7 @@ async function openChat(chat) {
 
   fillAvatarEl($("chatAvatar"), { avatar_url: chat.avatar_url, avatar_color: chat.avatar_color, name: chat.name });
   $("chatAvatar").classList.remove("saved-messages-avatar");
+  $("chatAvatar").classList.remove("ai-assistant-avatar");
   $("chatAvatarDot").classList.toggle("hidden", !(chat.type === "private" && chat.online));
   $("chatHeaderName").textContent = chat.name;
   updateChatHeaderSub(chat);
@@ -821,10 +828,13 @@ async function openSavedMessages() {
   activeChat = { id: "saved", type: "saved", name: "پیام‌های ذخیره‌شده", peer_id: null, avatar_url: null, avatar_color: null };
   activeChatRole = null;
   inSavedMessages = true;
+  inAiAssistant = false;
   pinnedMessages = [];
 
   document.querySelectorAll(".chat-item").forEach(el => el.classList.remove("active"));
   $("savedMessagesItem").classList.add("active");
+  $("aiAssistantItem").classList.remove("active");
+  $("chatAvatar").classList.remove("ai-assistant-avatar");
 
   $("emptyState").classList.add("hidden");
   $("chatWindow").classList.remove("hidden");
@@ -884,6 +894,110 @@ function renderSavedItem(item) {
 
 $("savedMessagesItem").addEventListener("click", openSavedMessages);
 
+// ============================================================
+// AI Assistant (private chatbot space — only ever visible to you)
+// ============================================================
+async function openAiAssistant() {
+  activeChat = { id: "ai", type: "ai", name: "دستیار هوش مصنوعی", peer_id: null, avatar_url: null, avatar_color: null };
+  activeChatRole = null;
+  inSavedMessages = false;
+  inAiAssistant = true;
+  pinnedMessages = [];
+
+  document.querySelectorAll(".chat-item").forEach(el => el.classList.remove("active"));
+  $("savedMessagesItem").classList.remove("active");
+  $("aiAssistantItem").classList.add("active");
+
+  $("emptyState").classList.add("hidden");
+  $("chatWindow").classList.remove("hidden");
+  $("appScreen").classList.add("chat-open");
+
+  $("chatAvatar").style.background = "";
+  $("chatAvatar").classList.remove("saved-messages-avatar");
+  $("chatAvatar").classList.add("ai-assistant-avatar");
+  $("chatAvatar").innerHTML = '<i class="fa-solid fa-robot"></i>';
+  $("chatAvatarDot").classList.add("hidden");
+  $("chatHeaderName").textContent = "دستیار هوش مصنوعی";
+  $("chatHeaderSub").textContent = "فقط شما آن را می‌بینید";
+  $("chatHeaderSub").classList.remove("online-text");
+  $("callBtn").classList.add("hidden");
+  $("chatInfoBtn").classList.remove("hidden");
+  $("chatInfoBtn").title = "پاک کردن گفتگو";
+  $("pinnedBar").classList.add("hidden");
+
+  updateMessageInputAccess();
+  cancelReplyOrEdit();
+  renderedMessages = new Map();
+  $("messagesContainer").innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px;">در حال بارگذاری...</div>`;
+
+  let items = [];
+  try { items = await api("/ai/messages"); } catch (e) { /* ignore */ }
+  $("messagesContainer").innerHTML = "";
+
+  if (items.length === 0) {
+    const intro = document.createElement("div");
+    intro.style.textAlign = "center";
+    intro.style.color = "var(--text-secondary)";
+    intro.style.padding = "20px";
+    intro.textContent = "سلام! من دستیار هوش مصنوعی لینکو هستم. هر سوالی داری بپرس 🙂";
+    $("messagesContainer").appendChild(intro);
+  }
+
+  let lastDay = null;
+  items.forEach(item => {
+    const parsedDay = parseServerDate(item.created_at);
+    const day = parsedDay ? parsedDay.toLocaleDateString("fa-IR", { year: "numeric", month: "long", day: "numeric" }) : "";
+    if (day !== lastDay) {
+      lastDay = day;
+      const divider = document.createElement("div");
+      divider.className = "day-divider";
+      divider.innerHTML = `<span>${escapeHtml(day)}</span>`;
+      $("messagesContainer").appendChild(divider);
+    }
+    renderAiMessage(item);
+  });
+  scrollMessagesToBottom();
+}
+
+function renderAiMessage(item) {
+  const isUser = item.role === "user";
+  renderMessage({
+    id: item.id,
+    sender_id: isUser ? me.id : AI_ASSISTANT_SENDER_ID,
+    sender_name: isUser ? me.display_name : "دستیار لینکو",
+    content: item.content,
+    message_type: "text",
+    file_url: null,
+    file_name: null,
+    file_size: null,
+    created_at: item.created_at,
+    edited_at: null,
+    forwarded_from_name: null,
+    reply_to: null,
+    reactions: [],
+  });
+}
+
+function showAiThinkingBubble() {
+  removeAiThinkingBubble();
+  const row = document.createElement("div");
+  row.className = "msg-row in";
+  row.id = "aiThinkingRow";
+  row.innerHTML = `
+    <div class="ai-thinking-bubble">
+      <span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span>
+    </div>`;
+  $("messagesContainer").appendChild(row);
+  scrollMessagesToBottom();
+}
+
+function removeAiThinkingBubble() {
+  const row = $("aiThinkingRow");
+  if (row) row.remove();
+}
+
+$("aiAssistantItem").addEventListener("click", openAiAssistant);
+
 function updatePinnedBar() {
   const bar = $("pinnedBar");
   if (!pinnedMessages || pinnedMessages.length === 0) { bar.classList.add("hidden"); return; }
@@ -931,9 +1045,11 @@ function closeActiveChat() {
   activeChat = null;
   activeChatRole = null;
   inSavedMessages = false;
+  inAiAssistant = false;
   pinnedMessages = [];
   $("pinnedBar").classList.add("hidden");
   $("savedMessagesItem").classList.remove("active");
+  $("aiAssistantItem").classList.remove("active");
   cancelReplyOrEdit();
   $("chatWindow").classList.add("hidden");
   $("emptyState").classList.remove("hidden");
@@ -1224,6 +1340,11 @@ async function deleteMessage(messageId) {
       const row = document.querySelector(`.msg-row[data-message-id="${messageId}"]`);
       if (row) row.remove();
       renderedMessages.delete(messageId);
+    } else if (inAiAssistant) {
+      await api(`/ai/messages/${messageId}`, { method: "DELETE" });
+      const row = document.querySelector(`.msg-row[data-message-id="${messageId}"]`);
+      if (row) row.remove();
+      renderedMessages.delete(messageId);
     } else {
       await api(`/messages/${messageId}`, { method: "DELETE" });
       // UI removal happens via the "message_deleted" socket broadcast (also reaches the sender)
@@ -1250,6 +1371,14 @@ function openMessageActionMenu(e, messageId) {
     $("messageActionPin").classList.add("hidden");
     $("messageActionCopy").classList.toggle("hidden", !isTextMsg);
     $("messageActionEdit").classList.toggle("hidden", !isTextMsg);
+    $("messageActionDelete").classList.remove("hidden");
+  } else if (inAiAssistant) {
+    $("quickReactionRow").classList.add("hidden");
+    $("messageActionReply").classList.add("hidden");
+    $("messageActionForward").classList.add("hidden");
+    $("messageActionPin").classList.add("hidden");
+    $("messageActionCopy").classList.toggle("hidden", !isTextMsg);
+    $("messageActionEdit").classList.add("hidden");
     $("messageActionDelete").classList.remove("hidden");
   } else {
     const canEdit = msg.sender_id === me.id && isTextMsg;
@@ -1430,6 +1559,27 @@ $("messageForm").addEventListener("submit", async (e) => {
       scrollMessagesToBottom();
     } catch (err) {
       showToast(err.message || "ذخیره یادداشت با خطا مواجه شد");
+    }
+    return;
+  }
+
+  if (inAiAssistant) {
+    input.innerHTML = "";
+    const plain = stripFormattingTokens(content);
+    renderAiMessage({ id: `tmp-${Date.now()}`, role: "user", content: plain, created_at: new Date().toISOString() });
+    scrollMessagesToBottom();
+    sendingMessage = true;
+    showAiThinkingBubble();
+    try {
+      const result = await api("/ai/chat", { method: "POST", body: { content: plain } });
+      removeAiThinkingBubble();
+      renderAiMessage(result.assistant_message);
+      scrollMessagesToBottom();
+    } catch (err) {
+      removeAiThinkingBubble();
+      showToast(err.message || "ارتباط با دستیار هوش مصنوعی با خطا مواجه شد");
+    } finally {
+      sendingMessage = false;
     }
     return;
   }
@@ -2139,6 +2289,23 @@ $("submitCreateChat").addEventListener("click", async () => {
 // ============================================================
 $("chatInfoBtn").addEventListener("click", () => {
   if (!activeChat) return;
+
+  if (activeChat.type === "ai") {
+    if (!confirm("آیا از پاک کردن کامل این گفتگو با دستیار هوش مصنوعی مطمئن هستید؟ این عملیات قابل بازگشت نیست.")) return;
+    api("/ai/messages", { method: "DELETE" }).then(() => {
+      $("messagesContainer").innerHTML = "";
+      renderedMessages = new Map();
+      const intro = document.createElement("div");
+      intro.style.textAlign = "center";
+      intro.style.color = "var(--text-secondary)";
+      intro.style.padding = "20px";
+      intro.textContent = "سلام! من دستیار هوش مصنوعی لینکو هستم. هر سوالی داری بپرس 🙂";
+      $("messagesContainer").appendChild(intro);
+      showToast("گفتگو پاک شد");
+    }).catch(err => showToast(err.message || "پاک کردن گفتگو با خطا مواجه شد"));
+    return;
+  }
+
   $("infoModalTitle").textContent = activeChat.name;
   $("infoModalDesc").textContent = activeChat.description || "بدون توضیحات";
   $("addMemberBtn").classList.toggle("hidden", activeChat.type === "private" || !["owner", "admin"].includes(activeChatRole));

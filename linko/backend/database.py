@@ -201,6 +201,15 @@ def init_db():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS ai_messages (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS polls (
                 id BIGSERIAL PRIMARY KEY,
                 message_id BIGINT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
@@ -242,6 +251,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id)",
             "CREATE INDEX IF NOT EXISTS idx_pins_chat ON chat_pins(chat_id)",
             "CREATE INDEX IF NOT EXISTS idx_saved_user ON saved_items(user_id, id DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_ai_messages_user ON ai_messages(user_id, id DESC)",
             "CREATE INDEX IF NOT EXISTS idx_poll_options_poll ON poll_options(poll_id, option_order)",
             "CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id)",
         ]

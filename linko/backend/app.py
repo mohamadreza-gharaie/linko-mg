@@ -15,6 +15,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 from backend.database import get_db, init_db
+from backend import ai_engine
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), "frontend")
@@ -1471,6 +1472,101 @@ def delete_saved_item(item_id):
         except OSError:
             pass
 
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# AI Assistant (private chatbot space, per user — same "not a real chat"
+# reasoning as Saved Messages above: no membership, no sockets, just a
+# simple per-user message log in its own table. See backend/ai_engine.py
+# for the reply logic and its documented upgrade path to a real LLM.)
+# ---------------------------------------------------------------------------
+
+def serialize_ai_message(r):
+    return {
+        "id": r["id"],
+        "role": r["role"],
+        "content": r["content"],
+        "created_at": json_time(r["created_at"]),
+    }
+
+
+@app.route("/api/ai/messages", methods=["GET"])
+@login_required
+def list_ai_messages():
+    uid = current_user_id()
+    db = get_db()
+    rows = db.execute("SELECT * FROM ai_messages WHERE user_id=? ORDER BY id", (uid,)).fetchall()
+    db.close()
+    return jsonify([serialize_ai_message(r) for r in rows])
+
+
+@app.route("/api/ai/chat", methods=["POST"])
+@login_required
+def ai_chat():
+    uid = current_user_id()
+    data = request.get_json(force=True) or {}
+    content = (data.get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "متن پیام نمی‌تواند خالی باشد"}), 400
+    if len(content) > 4000:
+        return jsonify({"error": "پیام خیلی طولانی است"}), 400
+
+    db = get_db()
+    history_rows = db.execute(
+        "SELECT role, content FROM ai_messages WHERE user_id=? ORDER BY id DESC LIMIT 20", (uid,)
+    ).fetchall()
+    history = [{"role": r["role"], "content": r["content"]} for r in reversed(history_rows)]
+
+    inserted = db.execute(
+        "INSERT INTO ai_messages (user_id, role, content) VALUES (?, 'user', ?) RETURNING id",
+        (uid, content),
+    ).fetchone()
+    db.commit()
+    user_row = db.execute("SELECT * FROM ai_messages WHERE id=?", (inserted["id"],)).fetchone()
+
+    try:
+        reply_text = ai_engine.generate_reply(history, content)
+    except Exception:
+        reply_text = "متأسفم، در پردازش پیام مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+
+    inserted2 = db.execute(
+        "INSERT INTO ai_messages (user_id, role, content) VALUES (?, 'assistant', ?) RETURNING id",
+        (uid, reply_text),
+    ).fetchone()
+    db.commit()
+    assistant_row = db.execute("SELECT * FROM ai_messages WHERE id=?", (inserted2["id"],)).fetchone()
+    db.close()
+
+    return jsonify({
+        "user_message": serialize_ai_message(user_row),
+        "assistant_message": serialize_ai_message(assistant_row),
+    })
+
+
+@app.route("/api/ai/messages/<int:message_id>", methods=["DELETE"])
+@login_required
+def delete_ai_message(message_id):
+    uid = current_user_id()
+    db = get_db()
+    row = db.execute("SELECT * FROM ai_messages WHERE id=? AND user_id=?", (message_id, uid)).fetchone()
+    if not row:
+        db.close()
+        return jsonify({"error": "پیام پیدا نشد"}), 404
+    db.execute("DELETE FROM ai_messages WHERE id=?", (message_id,))
+    db.commit()
+    db.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/ai/messages", methods=["DELETE"])
+@login_required
+def clear_ai_messages():
+    uid = current_user_id()
+    db = get_db()
+    db.execute("DELETE FROM ai_messages WHERE user_id=?", (uid,))
+    db.commit()
+    db.close()
     return jsonify({"ok": True})
 
 
