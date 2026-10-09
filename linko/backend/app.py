@@ -1998,6 +1998,27 @@ def change_password():
 
 
 # ---------------------------------------------------------------------------
+# SEO endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/robots.txt")
+def robots_txt():
+    from flask import Response
+    body = "User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /socket.io/\nSitemap: " + request.url_root.rstrip("/") + "/sitemap.xml\n"
+    return Response(body, mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    from flask import Response
+    base = request.url_root.rstrip("/")
+    body = '<?xml version="1.0" encoding="UTF-8"?>' \
+           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' \
+           '<url><loc>' + base + '/</loc></url></urlset>'
+    return Response(body, mimetype="application/xml")
+
+
+# ---------------------------------------------------------------------------
 # Static frontend
 # ---------------------------------------------------------------------------
 
