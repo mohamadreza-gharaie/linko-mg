@@ -271,6 +271,10 @@ function connectSocket() {
 
   socket.on("new_message", (msg) => {
     updateChatListWithMessage(msg);
+    // Our own message is already rendered optimistically (and resolved to its
+    // real id as soon as the send ack arrived) — rendering it again here would
+    // create a visible duplicate bubble.
+    if (renderedMessages.has(msg.id)) return;
     if (activeChat && activeChat.id === msg.chat_id) {
       renderMessage(msg);
       scrollMessagesToBottom();
@@ -490,7 +494,52 @@ window.addEventListener("focus", () => {
 
 function requestNotificationPermission() {
   if ("Notification" in window && Notification.permission === "default") {
-    Notification.requestPermission();
+    Notification.requestPermission().then(() => setupPushSubscription());
+  } else {
+    setupPushSubscription();
+  }
+}
+
+// ============================================================
+// Web Push: so a message reaches the user even with the site/tab
+// fully closed, via a service worker + the browser's push service.
+// ============================================================
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+async function setupPushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+  try {
+    const registration = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.ready;
+
+    const { key, enabled } = await api("/push/vapid-public-key");
+    if (!enabled || !key) return;
+
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key),
+      });
+    }
+
+    const json = subscription.toJSON();
+    await api("/push/subscribe", {
+      method: "POST",
+      body: { endpoint: json.endpoint, keys: json.keys },
+    });
+  } catch (e) {
+    // Push isn't critical to using Linko — fail silently (e.g. unsupported
+    // browser, user dismissed the permission prompt, offline VAPID key fetch).
   }
 }
 
@@ -729,11 +778,78 @@ function updateChatListWithMessage(msg) {
   renderChatList(chats);
 }
 
+let channelSearchDebounce = null;
+let channelSearchToken = 0;
+
 $("chatSearchInput").addEventListener("input", (e) => {
-  const q = e.target.value.trim().toLowerCase();
+  const raw = e.target.value.trim();
+  const q = raw.toLowerCase();
   const filtered = chats.filter(c => c.name.toLowerCase().includes(q));
   renderChatList(filtered);
+
+  clearTimeout(channelSearchDebounce);
+  if (!raw) {
+    $("channelSearchResults").classList.add("hidden");
+    $("channelSearchResults").innerHTML = "";
+    return;
+  }
+  channelSearchDebounce = setTimeout(() => searchPublicChannels(raw), 350);
 });
+
+async function searchPublicChannels(q) {
+  const myToken = ++channelSearchToken;
+  let results;
+  try {
+    results = await api(`/channels/search?q=${encodeURIComponent(q)}`);
+  } catch (e) {
+    return;
+  }
+  if (myToken !== channelSearchToken) return; // a newer search started meanwhile
+
+  const container = $("channelSearchResults");
+  const discoverable = results.filter(r => !r.already_member);
+  if (discoverable.length === 0) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = `<div class="channel-search-label">کانال‌های عمومی</div>`;
+  discoverable.forEach(ch => {
+    const el = document.createElement("div");
+    el.className = "channel-search-item";
+    el.innerHTML = `
+      ${avatarHtml({ avatar_url: ch.avatar_url, avatar_color: "#4e89ff", name: ch.name })}
+      <div class="chat-item-body">
+        <div class="chat-item-top"><span class="chat-item-name">${escapeHtml(ch.name)} <span class="chat-type-badge">کانال</span></span></div>
+        <div class="chat-item-bottom"><span class="chat-item-preview">${ch.handle ? "@" + escapeHtml(ch.handle) : escapeHtml(ch.description || "")}</span></div>
+      </div>
+      <button class="channel-join-btn">عضویت</button>
+    `;
+    el.querySelector(".channel-join-btn").addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const btn = ev.target;
+      btn.disabled = true;
+      btn.textContent = "در حال عضویت...";
+      try {
+        const chat = await api(`/channels/${ch.id}/join`, { method: "POST" });
+        await loadChats();
+        $("chatSearchInput").value = "";
+        $("channelSearchResults").classList.add("hidden");
+        $("channelSearchResults").innerHTML = "";
+        const found = chats.find(c => c.id === chat.id) || chat;
+        openChat(found);
+        showToast("به کانال پیوستید");
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "عضویت";
+        showToast(err.message);
+      }
+    });
+    container.appendChild(el);
+  });
+  container.classList.remove("hidden");
+}
 
 // ============================================================
 // Open chat / messages
@@ -921,8 +1037,7 @@ async function openAiAssistant() {
   $("chatHeaderSub").textContent = "فقط شما آن را می‌بینید";
   $("chatHeaderSub").classList.remove("online-text");
   $("callBtn").classList.add("hidden");
-  $("chatInfoBtn").classList.remove("hidden");
-  $("chatInfoBtn").title = "پاک کردن گفتگو";
+  $("chatInfoBtn").classList.add("hidden");
   $("pinnedBar").classList.add("hidden");
 
   updateMessageInputAccess();
@@ -975,6 +1090,7 @@ function renderAiMessage(item) {
     forwarded_from_name: null,
     reply_to: null,
     reactions: [],
+    pending: !!item.pending,
   });
 }
 
@@ -1075,11 +1191,39 @@ function computeIsRead(messageId) {
 
 function refreshReadTicks() {
   document.querySelectorAll(".msg-tick").forEach(el => {
+    if (el.classList.contains("pending")) return; // still sending — leave the clock icon alone
     const id = Number(el.dataset.messageId);
     const icon = el.querySelector("i");
     const isRead = computeIsRead(id);
     icon.className = isRead ? "fa-solid fa-check-double" : "fa-solid fa-check";
   });
+}
+
+// Swap a locally-rendered "pending" bubble (clock icon, temporary id) for its
+// confirmed server-side version (check-mark icon, real id) once the send
+// succeeds — without re-fetching or re-rendering the whole message list.
+function resolvePendingMessage(tempId, finalMsg) {
+  renderedMessages.delete(tempId);
+  renderedMessages.set(finalMsg.id, finalMsg);
+
+  const row = document.querySelector(`.msg-row[data-message-id="${tempId}"]`);
+  if (!row) return;
+  row.dataset.messageId = finalMsg.id;
+
+  const tick = row.querySelector(".msg-tick");
+  if (tick) {
+    tick.dataset.messageId = finalMsg.id;
+    tick.classList.remove("pending");
+    const icon = tick.querySelector("i");
+    if (icon) icon.className = "fa-solid fa-check";
+  }
+}
+
+// Drop a pending bubble whose send failed, so a stuck clock icon never lingers.
+function failPendingMessage(tempId) {
+  renderedMessages.delete(tempId);
+  const row = document.querySelector(`.msg-row[data-message-id="${tempId}"]`);
+  if (row) row.remove();
 }
 
 function renderMessage(msg) {
@@ -1104,8 +1248,9 @@ function renderMessage(msg) {
     : "";
 
   const editedTag = msg.edited_at ? `<span class="bubble-edited-tag">ویرایش‌شده</span>` : "";
+  const tickIconClass = msg.pending ? "fa-solid fa-clock" : "fa-solid fa-check";
   const tickHtml = msg.sender_id === me.id
-    ? `<span class="msg-tick" data-message-id="${msg.id}"><i class="fa-solid fa-check"></i></span>`
+    ? `<span class="msg-tick${msg.pending ? " pending" : ""}" data-message-id="${msg.id}"><i class="${tickIconClass}"></i></span>`
     : "";
   const timeLine = `<div class="bubble-time">${editedTag}<span>${formatTime(msg.created_at)}</span>${tickHtml}</div>`;
   const reactionsHtml = buildReactionsHtml(msg);
@@ -1566,16 +1711,33 @@ $("messageForm").addEventListener("submit", async (e) => {
   if (inAiAssistant) {
     input.innerHTML = "";
     const plain = stripFormattingTokens(content);
-    renderAiMessage({ id: `tmp-${Date.now()}`, role: "user", content: plain, created_at: new Date().toISOString() });
+    const tempId = `tmp-${Date.now()}`;
+    renderAiMessage({ id: tempId, role: "user", content: plain, created_at: new Date().toISOString(), pending: true });
     scrollMessagesToBottom();
     sendingMessage = true;
     showAiThinkingBubble();
     try {
       const result = await api("/ai/chat", { method: "POST", body: { content: plain } });
+      resolvePendingMessage(tempId, {
+        id: result.user_message.id,
+        sender_id: me.id,
+        sender_name: me.display_name,
+        content: result.user_message.content,
+        message_type: "text",
+        file_url: null,
+        file_name: null,
+        file_size: null,
+        created_at: result.user_message.created_at,
+        edited_at: null,
+        forwarded_from_name: null,
+        reply_to: null,
+        reactions: [],
+      });
       removeAiThinkingBubble();
       renderAiMessage(result.assistant_message);
       scrollMessagesToBottom();
     } catch (err) {
+      failPendingMessage(tempId);
       removeAiThinkingBubble();
       showToast(err.message || "ارتباط با دستیار هوش مصنوعی با خطا مواجه شد");
     } finally {
@@ -1585,8 +1747,35 @@ $("messageForm").addEventListener("submit", async (e) => {
   }
 
   const replyToId = replyingToMessage ? replyingToMessage.id : undefined;
+  const replyToPreview = replyingToMessage
+    ? { id: replyingToMessage.id, sender_name: replyingToMessage.sender_id === me.id ? me.display_name : replyingToMessage.sender_name, preview: messagePreviewText(replyingToMessage) }
+    : null;
   const payload = { chat_id: activeChat.id, content, message_type: "text", reply_to_id: replyToId };
   sendingMessage = true;
+
+  // Show the message immediately with a clock icon instead of waiting for the
+  // server round-trip; the icon flips to a check-mark once the send is
+  // confirmed (resolvePendingMessage), or the bubble is removed on failure.
+  const tempId = `tmp-${Date.now()}`;
+  renderMessage({
+    id: tempId,
+    sender_id: me.id,
+    sender_name: me.display_name,
+    content,
+    message_type: "text",
+    file_url: null,
+    file_name: null,
+    file_size: null,
+    created_at: new Date().toISOString(),
+    edited_at: null,
+    forwarded_from_name: null,
+    reply_to: replyToPreview,
+    reactions: [],
+    pending: true,
+  });
+  scrollMessagesToBottom();
+  input.innerHTML = "";
+  cancelReplyOrEdit();
 
   // Use Socket.IO when it is connected. If it is disconnected, use REST.
   // Do NOT retry REST after a socket timeout: the server may already have
@@ -1601,9 +1790,10 @@ $("messageForm").addEventListener("submit", async (e) => {
 
   try {
     if (!socket || !socket.connected) {
-      await sendViaRest();
+      const saved = await sendViaRest();
+      resolvePendingMessage(tempId, saved);
     } else {
-      await new Promise((resolve, reject) => {
+      const result = await new Promise((resolve, reject) => {
         let settled = false;
         const finish = (fn, value) => {
           if (settled) return;
@@ -1622,10 +1812,24 @@ $("messageForm").addEventListener("submit", async (e) => {
           }
         });
       });
+      resolvePendingMessage(tempId, {
+        id: result.message_id,
+        sender_id: me.id,
+        sender_name: me.display_name,
+        content,
+        message_type: "text",
+        file_url: null,
+        file_name: null,
+        file_size: null,
+        created_at: new Date().toISOString(),
+        edited_at: null,
+        forwarded_from_name: null,
+        reply_to: replyToPreview,
+        reactions: [],
+      });
     }
-    input.innerHTML = "";
-    cancelReplyOrEdit();
   } catch (err) {
+    failPendingMessage(tempId);
     showToast(err.message || "ارسال پیام ناموفق بود");
   } finally {
     sendingMessage = false;
@@ -2226,6 +2430,8 @@ function openCreateChatModal(mode) {
   $("newChatDesc").value = "";
   $("isPublicCheckbox").checked = false;
   $("publicToggleRow").classList.toggle("hidden", mode !== "channel");
+  $("newChatHandle").value = "";
+  $("channelHandleRow").classList.add("hidden");
   $("isOpenChatCheckbox").checked = false;
   $("openChatToggleRow").classList.toggle("hidden", mode !== "channel");
   $("memberSearchInput").value = "";
@@ -2240,6 +2446,10 @@ function openCreateChatModal(mode) {
     }
   });
 }
+
+$("isPublicCheckbox").addEventListener("change", () => {
+  $("channelHandleRow").classList.toggle("hidden", createChatMode !== "channel" || !$("isPublicCheckbox").checked);
+});
 
 function renderSelectedMembers() {
   const container = $("selectedMembers");
@@ -2270,6 +2480,10 @@ $("submitCreateChat").addEventListener("click", async () => {
   if (createChatMode === "channel") {
     body.is_public = $("isPublicCheckbox").checked;
     body.open_chat = $("isOpenChatCheckbox").checked;
+    if (body.is_public) {
+      const handle = $("newChatHandle").value.trim().replace(/^@/, "");
+      if (handle) body.handle = handle;
+    }
   }
 
   try {
@@ -2285,26 +2499,53 @@ $("submitCreateChat").addEventListener("click", async () => {
 });
 
 // ============================================================
+// Delete ALL messages (AI assistant, Saved Messages, and normal chats)
+// ============================================================
+function showEmptyAiIntro() {
+  const intro = document.createElement("div");
+  intro.style.textAlign = "center";
+  intro.style.color = "var(--text-secondary)";
+  intro.style.padding = "20px";
+  intro.textContent = "سلام! من دستیار هوش مصنوعی لینکو هستم. هر سوالی داری بپرس 🙂";
+  $("messagesContainer").appendChild(intro);
+}
+
+$("clearAllBtn").addEventListener("click", async () => {
+  if (!activeChat) return;
+  const type = activeChat.type;
+
+  try {
+    if (type === "ai") {
+      if (!confirm("همه‌ی پیام‌های گفتگو با دستیار هوش مصنوعی پاک شود؟ این کار قابل بازگشت نیست.")) return;
+      const forget = confirm("چیزهایی را هم که دستیار از تو «یاد گرفته» پاک کنم؟\n(OK = پاک شود، Cancel = بماند)");
+      await api(`/ai/messages${forget ? "?forget=1" : ""}`, { method: "DELETE" });
+      $("messagesContainer").innerHTML = "";
+      renderedMessages = new Map();
+      showEmptyAiIntro();
+    } else if (type === "saved") {
+      if (!confirm("همه‌ی پیام‌های ذخیره‌شده پاک شود؟ این کار قابل بازگشت نیست.")) return;
+      await api("/saved", { method: "DELETE" });
+      $("messagesContainer").innerHTML = "";
+      renderedMessages = new Map();
+    } else {
+      if (!confirm("همه‌ی پیام‌های این گفتگو فقط برای خودت پاک شود؟ (برای بقیه‌ی اعضا چیزی عوض نمی‌شود.)")) return;
+      await api(`/chats/${activeChat.id}/clear`, { method: "POST" });
+      $("messagesContainer").innerHTML = "";
+      renderedMessages = new Map();
+      pinnedMessages = [];
+      await loadChats();
+    }
+    showToast("همه‌ی پیام‌ها پاک شد");
+  } catch (err) {
+    showToast(err.message || "پاک کردن پیام‌ها با خطا مواجه شد");
+  }
+});
+
+// ============================================================
 // Chat info / members modal (+ advanced group & channel management)
 // ============================================================
 $("chatInfoBtn").addEventListener("click", () => {
   if (!activeChat) return;
-
-  if (activeChat.type === "ai") {
-    if (!confirm("آیا از پاک کردن کامل این گفتگو با دستیار هوش مصنوعی مطمئن هستید؟ این عملیات قابل بازگشت نیست.")) return;
-    api("/ai/messages", { method: "DELETE" }).then(() => {
-      $("messagesContainer").innerHTML = "";
-      renderedMessages = new Map();
-      const intro = document.createElement("div");
-      intro.style.textAlign = "center";
-      intro.style.color = "var(--text-secondary)";
-      intro.style.padding = "20px";
-      intro.textContent = "سلام! من دستیار هوش مصنوعی لینکو هستم. هر سوالی داری بپرس 🙂";
-      $("messagesContainer").appendChild(intro);
-      showToast("گفتگو پاک شد");
-    }).catch(err => showToast(err.message || "پاک کردن گفتگو با خطا مواجه شد"));
-    return;
-  }
 
   $("infoModalTitle").textContent = activeChat.name;
   $("infoModalDesc").textContent = activeChat.description || "بدون توضیحات";

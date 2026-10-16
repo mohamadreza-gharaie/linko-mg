@@ -382,6 +382,24 @@ input, textarea { font-family: inherit; }
   background: var(--bg-elevated); color: var(--text-secondary);
   font-weight: 600;
 }
+
+.channel-search-results { padding: 2px 8px 10px; }
+.channel-search-results .channel-search-label {
+  font-size: 11.5px; color: var(--text-secondary); padding: 8px 10px 4px; font-weight: 600;
+}
+.channel-search-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 10px; border-radius: 14px; margin-bottom: 2px;
+}
+.channel-search-item .chat-item-preview { max-width: 160px; }
+.channel-join-btn {
+  flex-shrink: 0; border: none; border-radius: 20px; padding: 6px 14px;
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  background: var(--accent-gradient); color: #fff;
+  transition: opacity 0.15s;
+}
+.channel-join-btn:hover { opacity: 0.85; }
+.channel-join-btn:disabled { background: var(--bg-elevated); color: var(--text-secondary); cursor: default; }
 .unread-badge {
   min-width: 20px; height: 20px; padding: 0 6px;
   border-radius: 20px;
@@ -485,6 +503,7 @@ input, textarea { font-family: inherit; }
 .msg-tick { display: inline-flex; align-items: center; font-size: 11.5px; }
 .msg-tick i { color: rgba(255,255,255,0.65); }
 .msg-tick i.fa-check-double { color: #d5ecff; }
+.msg-tick.pending i { color: rgba(255,255,255,0.45); font-size: 10.5px; }
 
 .day-divider {
   text-align: center; color: var(--text-secondary); font-size: 12px;
@@ -680,6 +699,8 @@ mark.msg-highlight {
 .modal-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,140,255,0.15); }
 
 .modal-subtitle { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+.field-hint { font-size: 11.5px; color: var(--text-secondary); margin: -6px 4px 8px; line-height: 1.6; }
 
 .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
 .checkbox-row input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }

@@ -7,3 +7,5 @@ Werkzeug==3.0.3
 gunicorn==22.0.0
 simple-websocket==1.0.0
 psycopg[binary]==3.2.10
+pywebpush==2.5.0
+Wikipedia-API==0.16.0

@@ -210,6 +210,36 @@ def init_db():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS ai_knowledge (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                question TEXT NOT NULL,
+                question_key TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (user_id, question_key)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS ai_wiki_cache (
+                query_key TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                url TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                endpoint TEXT NOT NULL UNIQUE,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS polls (
                 id BIGSERIAL PRIMARY KEY,
                 message_id BIGINT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
@@ -252,6 +282,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_pins_chat ON chat_pins(chat_id)",
             "CREATE INDEX IF NOT EXISTS idx_saved_user ON saved_items(user_id, id DESC)",
             "CREATE INDEX IF NOT EXISTS idx_ai_messages_user ON ai_messages(user_id, id DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_poll_options_poll ON poll_options(poll_id, option_order)",
             "CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id)",
         ]
@@ -263,6 +294,8 @@ def init_db():
         migrations = [
             ("users", "archive_password_hash", "TEXT"),
             ("chat_members", "archived", "INTEGER NOT NULL DEFAULT 0"),
+            ("chats", "handle", "TEXT"),
+            ("chat_members", "cleared_before", "BIGINT NOT NULL DEFAULT 0"),
         ]
         for table_name, column_name, column_type in migrations:
             exists = conn._conn.execute(
@@ -271,6 +304,14 @@ def init_db():
             ).fetchone()
             if not exists:
                 conn._conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+        # A public channel's handle (its "@username") must be unique, but private
+        # chats/groups/most channels leave it NULL — a plain UNIQUE constraint would
+        # reject more than one NULL-less row, so this is a partial index that only
+        # applies once a handle is actually set.
+        conn._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_handle_unique ON chats (lower(handle)) WHERE handle IS NOT NULL"
+        )
 
         conn.commit()
     finally:

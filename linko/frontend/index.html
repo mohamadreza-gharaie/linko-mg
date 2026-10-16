@@ -3,15 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
-<title>لینکو | پیام‌رسان لینکو؛ چت خصوصی، گروه و کانال</title>
-<meta name="description" content="لینکو یک پیام‌رسان برای گفت‌وگوی خصوصی، ساخت گروه و کانال و ارتباط آسان با دوستان است.">
-<meta name="keywords" content="لینکو, Linko, پیام رسان, پیام‌رسان لینکو, پیام رسان لینکو, تلگرا, چت آنلاین, گفتگوی خصوصی, گروه, کانال">
-<meta name="robots" content="index, follow, max-image-preview:large">
-<meta name="google-site-verification" content="GLIUmnRVrpu6Z7JqgkEOEKzcXShgb6XaJpDh9QqN1mE">
-<meta property="og:type" content="website">
-<meta property="og:title" content="لینکو | پیام‌رسان لینکو">
-<meta property="og:description" content="گفت‌وگوی خصوصی، گروه و کانال با پیام‌رسان لینکو.">
-<meta name="twitter:card" content="summary">
+<meta name="google-site-verification" content="GLIUmnRVrpu6Z7JqgkEOEKzcXShgb6XaJpDh9QqN1mE" />
+<title>لینکو | Linko</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="alternate icon" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -115,6 +108,7 @@
     </div>
 
     <div class="chat-list" id="chatList"></div>
+    <div class="channel-search-results hidden" id="channelSearchResults"></div>
   </aside>
 
   <!-- ناحیه گفتگو -->
@@ -136,6 +130,7 @@
           <div class="chat-header-sub" id="chatHeaderSub"></div>
         </div>
         <button class="icon-btn hidden" id="callBtn" title="تماس صوتی"><i class="fa-solid fa-phone"></i></button>
+        <button class="icon-btn" id="clearAllBtn" title="پاک کردن همه‌ی پیام‌ها"><i class="fa-solid fa-trash-can"></i></button>
         <button class="icon-btn" id="chatInfoBtn" title="اطلاعات و اعضا"><i class="fa-solid fa-circle-info"></i></button>
       </div>
 
@@ -233,6 +228,10 @@
         <input type="checkbox" id="isPublicCheckbox">
         <span>کانال عمومی باشد</span>
       </label>
+      <div class="hidden" id="channelHandleRow">
+        <input type="text" id="newChatHandle" placeholder="نام کاربری کانال (مثال: mychannel)" class="modal-input" dir="ltr">
+        <div class="field-hint">با این نام کاربری، بقیه می‌توانند این کانال را از بخش جستجو پیدا و در آن عضو شوند. فقط حروف انگلیسی، عدد و زیرخط، حداقل ۵ کاراکتر، باید با حرف شروع شود.</div>
+      </div>
       <label class="checkbox-row hidden" id="openChatToggleRow">
         <input type="checkbox" id="isOpenChatCheckbox">
         <span>اجازه بده همه اعضا در کانال پیام بدهند (پیش‌فرض: فقط مدیران)</span>

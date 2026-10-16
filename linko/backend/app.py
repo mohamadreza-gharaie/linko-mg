@@ -16,6 +16,9 @@ from werkzeug.utils import secure_filename
 
 from backend.database import get_db, init_db
 from backend import ai_engine
+from backend import ai_knowledge
+from backend import wiki
+from backend import push
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), "frontend")
@@ -104,6 +107,12 @@ AVATAR_COLORS = ["#4e89ff", "#ff6b6b", "#2ecc71", "#f39c12", "#9b59b6",
 THEME_COLOR_PRESETS = {"blue", "purple", "green", "teal", "orange", "red", "pink", "indigo"}
 THEME_MODES = {"dark", "light"}
 ALLOWED_REACTIONS = {"👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉"}
+
+# A public channel's "@handle" — letters/digits/underscore, must start with a
+# letter, 5-32 chars. Stored/compared lowercase so "MyChannel" and "mychannel"
+# collide (the DB's unique index is also case-insensitive, as a second line of
+# defense against a race between the check and the insert).
+CHANNEL_HANDLE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{4,31}$")
 
 ALLOWED_EXTENSIONS = {
     "jpg", "jpeg", "png", "gif", "webp", "bmp",              # image
@@ -210,6 +219,28 @@ def user_public(row):
     }
 
 
+def push_notify_new_message(chat_row, payload):
+    """Best-effort Web Push notification to every other member of the chat,
+    so a new message reaches a user even if the site/tab is fully closed.
+    Never allowed to break the message-sending flow that triggers it."""
+    try:
+        sender_name = payload["sender_name"]
+        preview = message_preview_text(payload["message_type"], payload["content"], payload["file_name"])
+        chat_keys = chat_row.keys() if chat_row else []
+        if chat_row and chat_row["type"] in ("group", "channel") and "name" in chat_keys and chat_row["name"]:
+            title = chat_row["name"]
+            body = f"{sender_name}: {preview}"
+        else:
+            title = sender_name
+            body = preview
+        push.notify_chat_members(
+            payload["chat_id"], payload["sender_id"], title, body,
+            url=f"/?chat={payload['chat_id']}", tag=f"linko-chat-{payload['chat_id']}",
+        )
+    except Exception:
+        pass
+
+
 def message_preview_text(message_type, content, file_name):
     if message_type == "image":
         return "🖼️ عکس"
@@ -284,12 +315,19 @@ def chat_display_for_user(db, chat, user_id):
         result["name"] = chat["name"]
         result["avatar_color"] = "#4e89ff"
         result["avatar_url"] = chat["avatar_url"] if "avatar_url" in chat.keys() else None
+        result["handle"] = chat["handle"] if "handle" in chat_keys else None
+
+    my_cleared = db.execute(
+        "SELECT cleared_before FROM chat_members WHERE chat_id=? AND user_id=?",
+        (chat_id, user_id),
+    ).fetchone()
+    cleared_before = (my_cleared["cleared_before"] if my_cleared else 0) or 0
 
     last_msg = db.execute(
         """SELECT m.*, u.display_name as sender_name FROM messages m
            JOIN users u ON u.id = m.sender_id
-           WHERE m.chat_id=? ORDER BY m.id DESC LIMIT 1""",
-        (chat_id,),
+           WHERE m.chat_id=? AND m.id > ? ORDER BY m.id DESC LIMIT 1""",
+        (chat_id, cleared_before),
     ).fetchone()
     if last_msg:
         result["last_message"] = {
@@ -312,7 +350,7 @@ def chat_display_for_user(db, chat, user_id):
         "SELECT last_read_message_id FROM chat_members WHERE chat_id=? AND user_id=?",
         (chat_id, user_id),
     ).fetchone()
-    my_last_read = my_membership["last_read_message_id"] if my_membership else 0
+    my_last_read = max(my_membership["last_read_message_id"] if my_membership else 0, cleared_before)
     unread = db.execute(
         "SELECT COUNT(*) as c FROM messages WHERE chat_id=? AND id > ? AND sender_id != ?",
         (chat_id, my_last_read, user_id),
@@ -603,11 +641,33 @@ def create_channel():
     if not name:
         return jsonify({"error": "نام کانال الزامی است"}), 400
 
+    # A handle ("@username") only ever makes sense for a public channel — it is
+    # how other users find and join it from search, which private/unlisted
+    # channels deliberately do not support.
+    handle = (data.get("handle") or "").strip().lstrip("@")
+    if handle and not is_public:
+        handle = ""
+    if is_public and handle:
+        if not CHANNEL_HANDLE_RE.match(handle):
+            return jsonify({"error": "نام کاربری کانال باید با حرف شروع شود و فقط شامل حروف انگلیسی، عدد و زیرخط باشد (۵ تا ۳۲ کاراکتر)"}), 400
+
     db = get_db()
-    row = db.execute(
-        "INSERT INTO chats (type, name, description, is_public, open_chat, owner_id) VALUES ('channel', ?, ?, ?, ?, ?) RETURNING id",
-        (name, data.get("description", ""), is_public, open_chat, uid),
-    ).fetchone()
+    if handle:
+        existing = db.execute(
+            "SELECT 1 FROM chats WHERE lower(handle)=lower(?)", (handle,)
+        ).fetchone()
+        if existing:
+            db.close()
+            return jsonify({"error": "این نام کاربری قبلاً برای کانال دیگری استفاده شده است"}), 409
+
+    try:
+        row = db.execute(
+            "INSERT INTO chats (type, name, description, is_public, open_chat, owner_id, handle) VALUES ('channel', ?, ?, ?, ?, ?, ?) RETURNING id",
+            (name, data.get("description", ""), is_public, open_chat, uid, handle or None),
+        ).fetchone()
+    except Exception:
+        db.close()
+        return jsonify({"error": "این نام کاربری قبلاً برای کانال دیگری استفاده شده است"}), 409
     chat_id = row["id"]
     db.execute("INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, 'owner')", (chat_id, uid))
     for mid in member_ids:
@@ -621,6 +681,123 @@ def create_channel():
     result = chat_display_for_user(db, chat, uid)
     db.close()
     return jsonify(result)
+
+
+@app.route("/api/channels/search", methods=["GET"])
+@login_required
+def search_public_channels():
+    """Only public channels are discoverable this way — private chats, groups,
+    and non-public channels never show up here, by design."""
+    q = (request.args.get("q") or "").strip().lstrip("@")
+    if not q:
+        return jsonify([])
+
+    db = get_db()
+    rows = db.execute(
+        """SELECT * FROM chats
+           WHERE type='channel' AND is_public=1
+             AND (lower(handle) LIKE lower(?) OR lower(name) LIKE lower(?))
+           ORDER BY (lower(handle) = lower(?)) DESC, name
+           LIMIT 20""",
+        (f"%{q}%", f"%{q}%", q),
+    ).fetchall()
+    uid = current_user_id()
+    results = []
+    for chat in rows:
+        member_count = db.execute(
+            "SELECT COUNT(*) as c FROM chat_members WHERE chat_id=?", (chat["id"],)
+        ).fetchone()["c"]
+        results.append({
+            "id": chat["id"],
+            "name": chat["name"],
+            "handle": chat["handle"],
+            "description": chat["description"],
+            "avatar_url": chat["avatar_url"],
+            "member_count": member_count,
+            "already_member": bool(is_member(db, chat["id"], uid)),
+        })
+    db.close()
+    return jsonify(results)
+
+
+@app.route("/api/channels/<int:chat_id>/join", methods=["POST"])
+@login_required
+def join_public_channel(chat_id):
+    uid = current_user_id()
+    db = get_db()
+    chat = db.execute("SELECT * FROM chats WHERE id=? AND type='channel'", (chat_id,)).fetchone()
+    if not chat:
+        db.close()
+        return jsonify({"error": "کانال پیدا نشد"}), 404
+    if not chat["is_public"]:
+        db.close()
+        return jsonify({"error": "این کانال عمومی نیست"}), 403
+
+    existing = db.execute(
+        "SELECT * FROM chat_members WHERE chat_id=? AND user_id=?", (chat_id, uid)
+    ).fetchone()
+    if existing:
+        if existing.get("archived") and not archive_is_unlocked():
+            db.close()
+            return jsonify({"error": "این گفتگو بایگانی شده است"}), 403
+    else:
+        db.execute(
+            "INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, 'member')",
+            (chat_id, uid),
+        )
+        db.commit()
+
+    chat = db.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
+    result = chat_display_for_user(db, chat, uid)
+    db.close()
+    return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Web Push notification subscriptions
+# ---------------------------------------------------------------------------
+
+@app.route("/api/push/vapid-public-key", methods=["GET"])
+@login_required
+def get_vapid_public_key():
+    return jsonify({"key": push.VAPID_PUBLIC_KEY_B64URL, "enabled": push.is_configured()})
+
+
+@app.route("/api/push/subscribe", methods=["POST"])
+@login_required
+def subscribe_push():
+    data = request.get_json(force=True) or {}
+    endpoint = data.get("endpoint")
+    keys = data.get("keys") or {}
+    p256dh = keys.get("p256dh")
+    auth = keys.get("auth")
+    if not endpoint or not p256dh or not auth:
+        return jsonify({"error": "اطلاعات اشتراک نامعتبر است"}), 400
+
+    uid = current_user_id()
+    db = get_db()
+    try:
+        push.save_subscription(db, uid, endpoint, p256dh, auth)
+    finally:
+        db.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/push/unsubscribe", methods=["POST"])
+@login_required
+def unsubscribe_push():
+    data = request.get_json(force=True) or {}
+    endpoint = data.get("endpoint")
+    if not endpoint:
+        return jsonify({"error": "endpoint الزامی است"}), 400
+
+    uid = current_user_id()
+    db = get_db()
+    try:
+        push.remove_subscription(db, uid, endpoint)
+    finally:
+        db.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/chats/<int:chat_id>/settings", methods=["POST"])
@@ -972,20 +1149,24 @@ def get_messages(chat_id):
         db.close()
         return jsonify({"error": "دسترسی ندارید"}), 403
 
+    cleared_before = db.execute(
+        "SELECT cleared_before FROM chat_members WHERE chat_id=? AND user_id=?", (chat_id, uid)
+    ).fetchone()["cleared_before"] or 0
+
     before_id = request.args.get("before_id", type=int)
     if before_id:
         rows = db.execute(
             """SELECT m.*, u.display_name as sender_name, u.avatar_color as sender_color, u.avatar_url as sender_avatar
                FROM messages m JOIN users u ON u.id = m.sender_id
-               WHERE m.chat_id=? AND m.id < ? ORDER BY m.id DESC LIMIT 50""",
-            (chat_id, before_id),
+               WHERE m.chat_id=? AND m.id < ? AND m.id > ? ORDER BY m.id DESC LIMIT 50""",
+            (chat_id, before_id, cleared_before),
         ).fetchall()
     else:
         rows = db.execute(
             """SELECT m.*, u.display_name as sender_name, u.avatar_color as sender_color, u.avatar_url as sender_avatar
                FROM messages m JOIN users u ON u.id = m.sender_id
-               WHERE m.chat_id=? ORDER BY m.id DESC LIMIT 50""",
-            (chat_id,),
+               WHERE m.chat_id=? AND m.id > ? ORDER BY m.id DESC LIMIT 50""",
+            (chat_id, cleared_before),
         ).fetchall()
 
     messages = [serialize_message(db, r, viewer_id=uid) for r in rows]
@@ -1228,7 +1409,7 @@ def forward_message(message_id):
 
     for chat_id in target_chat_ids:
         membership = is_member(db, chat_id, uid)
-        chat = db.execute("SELECT type, open_chat FROM chats WHERE id=?", (chat_id,)).fetchone()
+        chat = db.execute("SELECT type, open_chat, name FROM chats WHERE id=?", (chat_id,)).fetchone()
         if not can_post_in_chat(chat, membership):
             skipped_chats += 1
             continue
@@ -1247,6 +1428,7 @@ def forward_message(message_id):
         ).fetchone()
         payload = serialize_message(db, new_row)
         socketio.emit("new_message", payload, room=f"chat_{chat_id}")
+        push_notify_new_message(chat, payload)
         forwarded_to_chats += 1
 
     if to_saved:
@@ -1449,6 +1631,37 @@ def edit_saved_item(item_id):
     return jsonify(serialize_saved_item(row))
 
 
+@app.route("/api/saved", methods=["DELETE"])
+@login_required
+def clear_saved_items():
+    uid = current_user_id()
+    db = get_db()
+    db.execute("DELETE FROM saved_items WHERE user_id=?", (uid,))
+    db.commit()
+    db.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/chats/<int:chat_id>/clear", methods=["POST"])
+@login_required
+def clear_chat_for_me(chat_id):
+    """Hide every message currently in this chat from the caller only.
+    Other members keep their history; nothing is deleted from the database."""
+    uid = current_user_id()
+    db = get_db()
+    if not is_member(db, chat_id, uid):
+        db.close()
+        return jsonify({"error": "دسترسی ندارید"}), 403
+    last = db.execute("SELECT COALESCE(MAX(id), 0) AS m FROM messages WHERE chat_id=?", (chat_id,)).fetchone()["m"]
+    db.execute(
+        "UPDATE chat_members SET cleared_before=?, last_read_message_id=GREATEST(last_read_message_id, ?) WHERE chat_id=? AND user_id=?",
+        (last, last, chat_id, uid),
+    )
+    db.commit()
+    db.close()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/saved/<int:item_id>", methods=["DELETE"])
 @login_required
 def delete_saved_item(item_id):
@@ -1501,6 +1714,32 @@ def list_ai_messages():
     return jsonify([serialize_ai_message(r) for r in rows])
 
 
+def build_ai_reply(db, uid, history, content):
+    """Order: teach/forget commands -> what this user taught the assistant ->
+    built-in engine (math, time, Linko FAQ, small talk) -> Persian Wikipedia
+    for anything the engine doesn't know -> polite "I don't know"."""
+    try:
+        command_reply = ai_knowledge.handle_command(db, uid, content)
+        if command_reply:
+            return command_reply
+
+        learned = ai_knowledge.find_answer(db, uid, content)
+        if learned:
+            return learned
+
+        engine_reply = ai_engine.generate_reply(history, content)
+        if not ai_engine.is_fallback(engine_reply):
+            return engine_reply
+
+        wiki_result = wiki.lookup(db, content)
+        if wiki_result:
+            return wiki.format_answer(wiki_result)
+
+        return engine_reply + "\n\n💡 اگر جواب را می‌دانی، با «یاد بگیر: سوال = جواب» یادم بده."
+    except Exception:
+        return "متأسفم، در پردازش پیام مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+
+
 @app.route("/api/ai/chat", methods=["POST"])
 @login_required
 def ai_chat():
@@ -1525,10 +1764,7 @@ def ai_chat():
     db.commit()
     user_row = db.execute("SELECT * FROM ai_messages WHERE id=?", (inserted["id"],)).fetchone()
 
-    try:
-        reply_text = ai_engine.generate_reply(history, content)
-    except Exception:
-        reply_text = "متأسفم، در پردازش پیام مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+    reply_text = build_ai_reply(db, uid, history, content)
 
     inserted2 = db.execute(
         "INSERT INTO ai_messages (user_id, role, content) VALUES (?, 'assistant', ?) RETURNING id",
@@ -1565,6 +1801,9 @@ def clear_ai_messages():
     uid = current_user_id()
     db = get_db()
     db.execute("DELETE FROM ai_messages WHERE user_id=?", (uid,))
+    # ?forget=1 also wipes what the assistant learned from this user
+    if request.args.get("forget") == "1":
+        db.execute("DELETE FROM ai_knowledge WHERE user_id=?", (uid,))
     db.commit()
     db.close()
     return jsonify({"ok": True})
@@ -1651,6 +1890,7 @@ def create_poll(chat_id):
     db.close()
 
     socketio.emit("new_message", payload, room=f"chat_{chat_id}")
+    push_notify_new_message(chat, payload)
     return jsonify(payload)
 
 
@@ -1998,27 +2238,6 @@ def change_password():
 
 
 # ---------------------------------------------------------------------------
-# SEO endpoints
-# ---------------------------------------------------------------------------
-
-@app.route("/robots.txt")
-def robots_txt():
-    from flask import Response
-    body = "User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /socket.io/\nSitemap: " + request.url_root.rstrip("/") + "/sitemap.xml\n"
-    return Response(body, mimetype="text/plain")
-
-
-@app.route("/sitemap.xml")
-def sitemap_xml():
-    from flask import Response
-    base = request.url_root.rstrip("/")
-    body = '<?xml version="1.0" encoding="UTF-8"?>' \
-           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' \
-           '<url><loc>' + base + '/</loc></url></urlset>'
-    return Response(body, mimetype="application/xml")
-
-
-# ---------------------------------------------------------------------------
 # Static frontend
 # ---------------------------------------------------------------------------
 
@@ -2090,7 +2309,7 @@ def send_message_rest(chat_id):
         db.close()
         return jsonify({"error": "دسترسی به این گفتگو ندارید"}), 403
 
-    chat = db.execute("SELECT type, open_chat FROM chats WHERE id=?", (chat_id,)).fetchone()
+    chat = db.execute("SELECT type, open_chat, name FROM chats WHERE id=?", (chat_id,)).fetchone()
     if not can_post_in_chat(chat, membership):
         db.close()
         return jsonify({"error": "فقط مالک و مدیران این کانال می‌توانند پیام ارسال کنند"}), 403
@@ -2118,6 +2337,7 @@ def send_message_rest(chat_id):
     db.close()
 
     socketio.emit("new_message", payload, room=f"chat_{chat_id}")
+    push_notify_new_message(chat, payload)
     return jsonify(payload)
 
 
@@ -2153,7 +2373,7 @@ def on_send_message(data, callback=None):
         if callback: callback({"ok": False, "error": "دسترسی به این گفتگو ندارید"})
         return
 
-    chat = db.execute("SELECT type, open_chat FROM chats WHERE id=?", (chat_id,)).fetchone()
+    chat = db.execute("SELECT type, open_chat, name FROM chats WHERE id=?", (chat_id,)).fetchone()
     if not can_post_in_chat(chat, membership):
         db.close()
         socketio.emit("send_error", {"chat_id": chat_id, "reason": "channel_restricted"})
@@ -2190,6 +2410,7 @@ def on_send_message(data, callback=None):
     if callback:
         callback({"ok": True, "message_id": msg_id})
     socketio.emit("new_message", payload, room=f"chat_{chat_id}")
+    push_notify_new_message(chat, payload)
 
 
 @socketio.on("join_chat")
